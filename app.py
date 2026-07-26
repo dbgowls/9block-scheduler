@@ -2,7 +2,6 @@ import streamlit as st
 import datetime
 import calendar
 import smtplib
-import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import gspread
@@ -33,8 +32,7 @@ st.markdown("""
 
 st.title("🗓️ 9BLOCK 가맹점 오픈 스케줄러")
 
-# --- 구글 시트 클라이언트 연결 함수 ---
-@st.cache_resource
+# --- 구글 시트 클라이언트 연결 ---
 def get_gspread_client():
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -46,7 +44,7 @@ def get_gspread_client():
         st.error(f"구글 연동 키 설정 오류: {e}")
         return None
 
-# 구글 시트에서 데이터 읽어오기
+# 구글 시트 데이터 불러오기 (캐시 비적용으로 항상 최신 데이터 수신)
 def load_data_from_gsheets():
     client = get_gspread_client()
     if not client:
@@ -60,15 +58,16 @@ def load_data_from_gsheets():
         try:
             ws_stores = doc.worksheet("stores")
             stores_data = ws_stores.get_all_records()
-            stores = {r["매장명"]: datetime.datetime.strptime(r["오픈일"], "%Y-%m-%d").date() for r in stores_data if r.get("매장명")}
-        except:
+            stores = {r["매장명"]: datetime.datetime.strptime(str(r["오픈일"]), "%Y-%m-%d").date() for r in stores_data if r.get("매장명")}
+        except Exception:
             stores = {"충청점": datetime.date(2026, 9, 18)}
 
         # 2) 공정 데이터
         try:
             ws_tasks = doc.worksheet("tasks")
             tasks = ws_tasks.get_all_records()
-        except:
+            if not tasks: raise Exception()
+        except Exception:
             tasks = [
                 {"부서": "개발", "주요업무": "백화점/몰 입점 물건조사 및 상권분석", "offset": -45, "담당": "개발팀"},
                 {"부서": "구매/운영", "주요업무": "[★선행] 입지 맞춤 메뉴 라인업 확정", "offset": -40, "담당": "구매/운영팀"},
@@ -88,7 +87,8 @@ def load_data_from_gsheets():
             ws_contacts = doc.worksheet("contacts")
             contacts_data = ws_contacts.get_all_records()
             contacts = {r["팀명"]: {"name": r["담당자"], "email": r["이메일"]} for r in contacts_data if r.get("팀명")}
-        except:
+            if not contacts: raise Exception()
+        except Exception:
             contacts = {
                 "개발팀": {"name": "김개발 팀장", "email": "dev@9block.co.kr"},
                 "구매/운영팀": {"name": "이구매 팀장", "email": "buy@9block.co.kr"},
@@ -101,10 +101,10 @@ def load_data_from_gsheets():
         return {"stores": stores, "master_tasks": tasks, "contacts": contacts}
 
     except Exception as e:
-        st.warning(f"구글 시트 불러오기 대기 중: {e}")
+        st.error(f"구글 시트 연동 에러: {e}")
         return None
 
-# 구글 시트에 저장하기
+# 구글 시트에 저장
 def save_stores_to_gsheets():
     client = get_gspread_client()
     if client:
@@ -122,7 +122,7 @@ def save_stores_to_gsheets():
                 rows.append([name, date_obj.strftime("%Y-%m-%d")])
             ws.update("A1", rows)
         except Exception as e:
-            st.error(f"구글 시트 저장 오류: {e}")
+            st.error(f"구글 시트 저장 실패 (공유 권한을 확인하세요): {e}")
 
 def save_contacts_to_gsheets():
     client = get_gspread_client()
@@ -141,12 +141,12 @@ def save_contacts_to_gsheets():
                 rows.append([team, info["name"], info["email"]])
             ws.update("A1", rows)
         except Exception as e:
-            st.error(f"구글 시트 저장 오류: {e}")
+            st.error(f"구글 시트 저장 실패: {e}")
 
-# --- 세션 초기화 ---
+# --- 세션 초기화 (접속 시 구글 시트에서 매번 최신 데이터 불러오기) ---
 if "initialized" not in st.session_state:
     gs_data = load_data_from_gsheets()
-    if gs_data:
+    if gs_data and gs_data["stores"]:
         st.session_state.stores = gs_data["stores"]
         st.session_state.master_tasks = gs_data["master_tasks"]
         st.session_state.contacts = gs_data["contacts"]
@@ -214,8 +214,8 @@ with st.sidebar.form("add_store_form", clear_on_submit=True):
     if st.form_submit_button("지점 추가하기"):
         if new_store_name.strip():
             st.session_state.stores[new_store_name.strip()] = new_open_date
-            save_stores_to_gsheets()  # ☁️ 구글 시트 영구 저장
-            st.sidebar.success(f"'{new_store_name}' 추가 및 클라우드 저장 완료!")
+            save_stores_to_gsheets()
+            st.sidebar.success(f"'{new_store_name}' 추가 완료!")
             st.rerun()
 
 st.sidebar.markdown("---")
@@ -227,29 +227,19 @@ if st.session_state.stores:
     col_btn1, col_btn2 = st.sidebar.columns(2)
     if col_btn1.button("날짜 수정"):
         st.session_state.stores[selected_edit_store] = updated_date
-        save_stores_to_gsheets()  # ☁️ 구글 시트 영구 저장
-        st.sidebar.success("수정 및 클라우드 저장 완료!")
+        save_stores_to_gsheets()
+        st.sidebar.success("수정 완료!")
         st.rerun()
     if col_btn2.button("지점 삭제"):
         del st.session_state.stores[selected_edit_store]
-        save_stores_to_gsheets()  # ☁️ 구글 시트 영구 저장
-        st.sidebar.warning("삭제 및 클라우드 저장 완료!")
+        save_stores_to_gsheets()
+        st.sidebar.warning("삭제 완료!")
         st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ 공정 항목 추가 / 삭제")
-with st.sidebar.expander("➕ 새 공정 항목 추가"):
-    with st.form("add_task_form", clear_on_submit=True):
-        add_dept = st.selectbox("부서 선택", ["개발", "구매/운영", "인테리어", "마케팅", "전부서"])
-        add_title = st.text_input("주요 업무 내용")
-        add_offset = st.number_input("D-Day (예: -15)", value=-10, step=1)
-        add_team = st.text_input("담당 팀명", value="운영팀")
-        if st.form_submit_button("공정 추가"):
-            if add_title.strip():
-                st.session_state.master_tasks.append({
-                    "부서": add_dept, "주요업무": add_title.strip(), "offset": add_offset, "담당": add_team.strip()
-                })
-                st.rerun()
+if st.sidebar.button("🔄 구글 시트 최신 데이터 불러오기"):
+    st.session_state.clear()
+    st.rerun()
 
 # 3. 데이터 연산
 all_schedule_data = []
@@ -333,7 +323,6 @@ with tab1:
                 cols[i].markdown(f"<div style='{box_style}'><b>{d.day}</b>{tasks_html}</div>", unsafe_allow_html=True)
 
     else:
-        # 모바일 레이아웃
         month_tasks = [s for s in all_schedule_data if s["year"] == v_year and s["month"] == v_month]
         if month_tasks:
             sorted_m_tasks = sorted(month_tasks, key=lambda x: x["일자"])
@@ -423,8 +412,8 @@ with tab4:
                 "name": name_input.strip(),
                 "email": email_input.strip()
             }
-            save_contacts_to_gsheets()  # ☁️ 구글 시트 영구 저장
-            st.success("등록 및 클라우드 저장 완료!")
+            save_contacts_to_gsheets()
+            st.success("등록 완료!")
             st.rerun()
 
     st.markdown("---")
