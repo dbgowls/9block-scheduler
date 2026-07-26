@@ -32,7 +32,7 @@ st.markdown("""
 
 st.title("🗓️ 9BLOCK 가맹점 오픈 스케줄러")
 
-# 기본 템플릿 정의
+# 기본 표준 데이터
 DEFAULT_STORES = {"충청점": datetime.date(2026, 9, 18)}
 
 DEFAULT_TASKS = [
@@ -58,67 +58,72 @@ DEFAULT_CONTACTS = {
     "전부서": {"name": "오픈지원TF", "email": "tf@9block.co.kr"}
 }
 
-# --- 구글 시트 연동 진단 및 로드 ---
+# --- 구글 시트 연결 및 연동 ---
 def get_gsheet_doc():
-    if "gcp_service_account" not in st.secrets:
-        st.error("❌ Secrets에 [gcp_service_account] 설정이 없습니다.")
+    if "gcp_service_account" not in st.secrets or "SPREADSHEET_ID" not in st.secrets:
         return None
-    if "SPREADSHEET_ID" not in st.secrets:
-        st.error("❌ Secrets에 SPREADSHEET_ID 설정이 없습니다.")
+    try:
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        credentials_info = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_info, scope)
+        client = gspread.authorize(creds)
+        sheet_id = st.secrets["SPREADSHEET_ID"]
+        return client.open_by_key(sheet_id)
+    except Exception as e:
+        st.error(f"구글 시트 인증 실패: {e}")
         return None
-
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    credentials_info = dict(st.secrets["gcp_service_account"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_info, scope)
-    client = gspread.authorize(creds)
-    sheet_id = st.secrets["SPREADSHEET_ID"]
-    return client.open_by_key(sheet_id)
 
 def load_data_from_gsheets():
     try:
         doc = get_gsheet_doc()
         if not doc:
-            return dict(DEFAULT_STORES), list(DEFAULT_TASKS), dict(DEFAULT_CONTACTS)
+            return dict(DEFAULT_STORES), dict(DEFAULT_CONTACTS)
 
-        # 1) stores 워크시트 불러오기
+        # 1. 지점 불러오기
+        stores = {}
         try:
             ws_stores = doc.worksheet("stores")
             records = ws_stores.get_all_records()
-            stores = {}
             for r in records:
-                if r.get("매장명") and r.get("오픈일"):
-                    s_date_str = str(r["오픈일"]).strip()
-                    stores[str(r["매장명"]).strip()] = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
-            if not stores:
-                stores = dict(DEFAULT_STORES)
+                s_name = str(r.get("매장명", "")).strip()
+                s_date = str(r.get("오픈일", "")).strip()
+                if s_name and s_date:
+                    stores[s_name] = datetime.datetime.strptime(s_date, "%Y-%m-%d").date()
         except Exception:
+            pass
+
+        if not stores:
             stores = dict(DEFAULT_STORES)
 
-        # 2) contacts 워크시트 불러오기
+        # 2. 주소록 불러오기
+        contacts = {}
         try:
             ws_contacts = doc.worksheet("contacts")
             c_records = ws_contacts.get_all_records()
-            contacts = {}
             for r in c_records:
-                if r.get("팀명"):
-                    contacts[str(r["팀명"]).strip()] = {"name": str(r.get("담당자", "")), "email": str(r.get("이메일", ""))}
-            if not contacts:
-                contacts = dict(DEFAULT_CONTACTS)
+                team = str(r.get("팀명", "")).strip()
+                name = str(r.get("담당자", "")).strip()
+                email = str(r.get("이메일", "")).strip()
+                if team:
+                    contacts[team] = {"name": name, "email": email}
         except Exception:
+            pass
+
+        if not contacts:
             contacts = dict(DEFAULT_CONTACTS)
 
-        return stores, list(DEFAULT_TASKS), contacts
+        return stores, contacts
 
     except Exception as e:
-        st.warning(f"⚠️ 구글 시트 연결 실패 (기본값 표시 중): {e}")
-        return dict(DEFAULT_STORES), list(DEFAULT_TASKS), dict(DEFAULT_CONTACTS)
+        st.warning(f"구글 시트 읽기 중 알림: {e}")
+        return dict(DEFAULT_STORES), dict(DEFAULT_CONTACTS)
 
 def save_stores_to_gsheets():
+    doc = get_gsheet_doc()
+    if not doc:
+        st.error("구글 시트에 연결할 수 없습니다.")
+        return
     try:
-        doc = get_gsheet_doc()
-        if not doc:
-            return
-        
         try:
             ws = doc.worksheet("stores")
         except Exception:
@@ -129,16 +134,38 @@ def save_stores_to_gsheets():
         for name, date_obj in st.session_state.stores.items():
             rows.append([name, date_obj.strftime("%Y-%m-%d")])
         ws.update("A1", rows)
-        st.toast("☁️ 구글 시트에 영구 저장되었습니다!", icon="✅")
+        st.toast("☁️ 지점 정보가 구글 시트에 영구 저장되었습니다!", icon="✅")
     except Exception as e:
-        st.error(f"❌ 구글 시트 저장 실패: {e}")
+        st.error(f"구글 시트 지점 저장 실패: {e}")
 
-# --- 세션 상태 초기화 ---
-if "stores" not in st.session_state:
-    loaded_stores, loaded_tasks, loaded_contacts = load_data_from_gsheets()
+def save_contacts_to_gsheets():
+    doc = get_gsheet_doc()
+    if not doc:
+        st.error("구글 시트에 연결할 수 없습니다.")
+        return
+    try:
+        try:
+            ws = doc.worksheet("contacts")
+        except Exception:
+            ws = doc.add_worksheet(title="contacts", rows="100", cols="5")
+        
+        ws.clear()
+        rows = [["팀명", "담당자", "이메일"]]
+        for team, info in st.session_state.contacts.items():
+            rows.append([team, info["name"], info["email"]])
+        ws.update("A1", rows)
+        st.toast("☁️ 이메일 주소록이 구글 시트에 영구 저장되었습니다!", icon="✅")
+    except Exception as e:
+        st.error(f"구글 시트 주소록 저장 실패: {e}")
+
+# --- 세션 초기화 (최초 접속 시 구글 시트 데이터 로드) ---
+if "stores" not in st.session_state or "contacts" not in st.session_state:
+    loaded_stores, loaded_contacts = load_data_from_gsheets()
     st.session_state.stores = loaded_stores
-    st.session_state.master_tasks = loaded_tasks
     st.session_state.contacts = loaded_contacts
+
+if "master_tasks" not in st.session_state:
+    st.session_state.master_tasks = list(DEFAULT_TASKS)
 
 if "mail_schedules" not in st.session_state:
     st.session_state.mail_schedules = {}
@@ -186,27 +213,34 @@ with st.sidebar.form("add_store_form", clear_on_submit=True):
         if new_store_name.strip():
             st.session_state.stores[new_store_name.strip()] = new_open_date
             save_stores_to_gsheets()
+            st.sidebar.success(f"'{new_store_name}' 추가 완료!")
             st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.header("✏️ 지점 정보 수정 / 삭제")
 if st.session_state.stores:
-    selected_edit_store = st.sidebar.selectbox("지점 선택", list(st.session_state.stores.keys()))
+    store_list = list(st.session_state.stores.keys())
+    selected_edit_store = st.sidebar.selectbox("지점 드롭다운 선택", store_list)
+    
     current_date = st.session_state.stores[selected_edit_store]
-    updated_date = st.sidebar.date_input("오픈 예정일 변경", value=current_date, key="edit_date_input")
+    updated_date = st.sidebar.date_input("오픈 예정일 변경", value=current_date, key=f"date_input_{selected_edit_store}")
+    
     col_btn1, col_btn2 = st.sidebar.columns(2)
     if col_btn1.button("날짜 수정"):
         st.session_state.stores[selected_edit_store] = updated_date
         save_stores_to_gsheets()
+        st.sidebar.success("날짜 수정 및 구글 시트 저장 완료!")
         st.rerun()
     if col_btn2.button("지점 삭제"):
         del st.session_state.stores[selected_edit_store]
         save_stores_to_gsheets()
+        st.sidebar.warning("삭제 완료!")
         st.rerun()
 
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 구글 시트 동기화 (불러오기)"):
-    del st.session_state.stores
+if st.sidebar.button("🔄 구글 시트 최신 데이터 강제 불러오기"):
+    if "stores" in st.session_state: del st.session_state.stores
+    if "contacts" in st.session_state: del st.session_state.contacts
     st.rerun()
 
 # 3. 데이터 연산
@@ -380,7 +414,8 @@ with tab4:
                 "name": name_input.strip(),
                 "email": email_input.strip()
             }
-            st.success("등록 완료!")
+            save_contacts_to_gsheets()
+            st.success("등록 완료 및 구글 시트 저장!")
             st.rerun()
 
     st.markdown("---")
