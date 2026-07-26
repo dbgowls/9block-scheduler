@@ -8,12 +8,12 @@ from email.mime.multipart import MIMEMultipart
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# 1. 페이지 기본 설정 및 반응형 그리드 CSS
+# 1. 페이지 기본 설정 및 모바일/PC 반응형 CSS
 st.set_page_config(page_title="9BLOCK 통합 오픈 스케줄러", page_icon="🗓️", layout="wide")
 
 st.markdown("""
     <style>
-    /* PC 달력: 헤더 스타일 */
+    /* PC 달력 헤더 */
     .pc-header-row {
         display: flex;
         width: 100%;
@@ -28,8 +28,13 @@ st.markdown("""
     }
     .pc-header-cell { flex: 1; }
 
-    /* 지점 구분 (직영/가맹/위탁) 뱃지 */
-    .badge-type { padding: 1px 4px; border-radius: 3px; font-size: 9px; font-weight: bold; background-color: rgba(0,0,0,0.1); }
+    /* 공정 카드 헤더 레이아웃 (우측 상단 버튼 정렬용) */
+    .task-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2px;
+    }
 
     /* 모바일 달력 그리드 */
     .mobile-cal-header {
@@ -43,23 +48,14 @@ st.markdown("""
         border-radius: 6px 6px 0 0;
         font-size: 12px;
     }
-    .mobile-cal-grid {
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 2px;
-        background-color: #e0e0e0;
-        border: 1px solid #e0e0e0;
-        border-radius: 0 0 6px 6px;
-    }
-    .mobile-day-cell {
-        background-color: #ffffff;
-        min-height: 100px;
-        padding: 3px;
-        font-size: 10px;
-    }
-    .mobile-day-cell.other-month {
-        background-color: #f7f7f7;
-        color: #bbb;
+    
+    /* Streamlit Popover 버튼 스타일 커스텀 */
+    div[data-testid="stPopover"] > button {
+        padding: 0px 4px !important;
+        font-size: 10px !important;
+        height: auto !important;
+        line-height: 1 !important;
+        min-height: unset !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -94,7 +90,7 @@ DEFAULT_CONTACTS = {
     "전부서": {"name": "오픈지원TF", "email": "tf@9block.co.kr"}
 }
 
-# --- 매장별 고유 컬러 팔레트 생성 함수 ---
+# --- 매장별 고유 컬러 팔레트 생성 ---
 STORE_PALETTE = [
     {"bg": "#E3F2FD", "border": "#2196F3", "text": "#0D47A1"}, # Blue
     {"bg": "#E8F5E9", "border": "#4CAF50", "text": "#1B5E20"}, # Green
@@ -102,11 +98,9 @@ STORE_PALETTE = [
     {"bg": "#F3E5F5", "border": "#9C27B0", "text": "#4A148C"}, # Purple
     {"bg": "#E0F7FA", "border": "#00BCD4", "text": "#006064"}, # Cyan
     {"bg": "#FBE9E7", "border": "#FF5722", "text": "#BF360C"}, # Deep Orange
-    {"bg": "#FFFDE7", "border": "#FBC02D", "text": "#F57F17"}, # Yellow
 ]
 
 def get_store_color(store_name):
-    """매장명 해시값을 기반으로 고유한 팔레트 색상을 반환"""
     idx = abs(hash(store_name)) % len(STORE_PALETTE)
     return STORE_PALETTE[idx]
 
@@ -244,25 +238,25 @@ if "current_view_date" not in st.session_state:
 if "view_mode_choice" not in st.session_state:
     st.session_state.view_mode_choice = "🖥️ PC 넓은 달력 보기"
 
-# --- 메일 발송 함수 (검증 강화) ---
+# --- 메일 발송 함수 (SSL/TLS 예외처리 보완) ---
 def send_email_auto(receiver_emails, subject, body):
-    """지정된 주소 목록으로 자동 이메일 발송"""
+    """안정성이 강화된 이메일 전송 함수"""
     try:
         if "SENDER_EMAIL" not in st.secrets or "SENDER_PASSWORD" not in st.secrets:
-            return False, "Streamlit Secrets에 SENDER_EMAIL 또는 SENDER_PASSWORD가 누락되었습니다."
+            return False, "Streamlit Secrets 설정에 SENDER_EMAIL 또는 SENDER_PASSWORD가 없습니다."
         
-        sender_email = st.secrets["SENDER_EMAIL"]
-        sender_password = st.secrets["SENDER_PASSWORD"]
+        sender_email = st.secrets["SENDER_EMAIL"].strip()
+        sender_password = st.secrets["SENDER_PASSWORD"].strip()
 
         if isinstance(receiver_emails, str):
             receiver_emails = [receiver_emails]
         
-        # 이메일 수신자 정제 (유효한 주소만 검증)
-        email_regex = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+        # 수신 이메일 정규식 검증
+        email_regex = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
         valid_receivers = [e.strip() for e in receiver_emails if e and re.match(email_regex, e.strip())]
         
         if not valid_receivers:
-            return False, "등록된 유효한 이메일 주소가 없습니다."
+            return False, "등록된 담당자 중 유효한 이메일 주소가 없습니다."
 
         msg = MIMEMultipart()
         msg['From'] = sender_email
@@ -270,17 +264,20 @@ def send_email_auto(receiver_emails, subject, body):
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-        server = smtplib.SMTP("smtp.gmail.com", 587)
+        # SMTP 연결 (TLS 587 사용)
+        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)
+        server.ehlo()
         server.starttls()
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, valid_receivers, msg.as_string())
         server.quit()
-        return True, f"총 {len(valid_receivers)}명에게 메일 발송 성공"
+        
+        return True, f"총 {len(valid_receivers)}명에게 발송 완료"
     except Exception as e:
-        return False, f"이메일 발송 실패: {e}"
+        return False, f"SMTP 발송 오류: {str(e)}"
 
 def notify_all_contacts(subject, body):
-    """주소록의 모든 수신자에게 메일 알림"""
+    """주소록 전체 인원에게 이메일 알림 전송"""
     all_emails = [info.get("email", "") for info in st.session_state.contacts.values()]
     return send_email_auto(all_emails, subject, body)
 
@@ -421,7 +418,7 @@ with tab1:
     selected_mode = st.radio("🖥️ 화면 보기 방식 선택", options, index=current_index, horizontal=True)
     st.session_state.view_mode_choice = selected_mode
 
-    # 1. PC 넓은 달력 보기 (매장별 고유 색상 및 점 세개 메뉴 기능 추가)
+    # 1. PC 넓은 달력 보기 (카드 우측 상단 ⋮ 설정 버튼 배치)
     if st.session_state.view_mode_choice == "🖥️ PC 넓은 달력 보기":
         cal = calendar.Calendar(firstweekday=0)
         month_days = cal.monthdatescalendar(v_year, v_month)
@@ -447,53 +444,54 @@ with tab1:
                     if d_str in schedule_map:
                         for item in schedule_map[d_str]:
                             t_id = item["task_id"]
-                            s_color = get_store_color(item["매장명"]) # 매장별 고유 색상 가져오기
+                            s_color = get_store_color(item["매장명"])
                             
-                            # 공정 카드 헤더 구성
                             status_icon = "✅" if item["completed"] else "⏳"
                             card_bg = "#f0f0f0" if item["completed"] else s_color["bg"]
                             card_border = "#cccccc" if item["completed"] else s_color["border"]
                             card_text = "#888888" if item["completed"] else s_color["text"]
                             text_style = "text-decoration: line-through;" if item["completed"] else ""
 
-                            # 공정 요약 정보 HTML
-                            st.markdown(f"""
-                            <div style='background-color:{card_bg}; border:1px solid {card_border}; color:{card_text}; padding:4px; border-radius:4px; margin-top:4px;'>
-                                <div style='font-size:10px; font-weight:bold; display:flex; justify-content:space-between; align-items:center;'>
-                                    <span>[{item['지점타입']}|{item['매장명']}]</span>
-                                    <span>{status_icon}</span>
+                            # 카드 헤더 (우측 상단에 팝오버 설정 배치)
+                            c_info_left, c_info_right = st.columns([4, 1])
+                            with c_info_left:
+                                st.markdown(f"""
+                                <div style='font-size:10px; font-weight:bold; color:{card_text}; margin-top:3px;'>
+                                    [{item['지점타입']}|{item['매장명']}] {status_icon}
                                 </div>
-                                <div style='font-size:10px; {text_style} margin-top:2px;'>
+                                """, unsafe_allow_html=True)
+                            with c_info_right:
+                                # 우측 상단 설정(⋮) 팝오버
+                                with st.popover("⋮"):
+                                    st.write(f"**[{item['매장명']}] 공정 상태 변경**")
+                                    is_done_pop = st.checkbox("공정 완료 처리", value=item["completed"], key=f"pop_check_{t_id}")
+                                    
+                                    if st.button("저장 및 메일 알림 발송", key=f"pop_save_{t_id}"):
+                                        if t_id not in st.session_state.task_status:
+                                            st.session_state.task_status[t_id] = {}
+                                        st.session_state.task_status[t_id]["completed"] = is_done_pop
+                                        save_task_status_to_gsheets()
+                                        
+                                        status_label = "완료 (✅)" if is_done_pop else "진행 예정 (⏳)"
+                                        sub = f"📢 [공정 상태 변경] [{item['매장명']}] {item['부서']} - {item['주요업무']}"
+                                        body = f"안녕하세요,\n\n[{item['매장명']}] 지점의 공정 상태가 변경되었습니다.\n\n"
+                                        body += f"📌 공정명: {item['주요업무']}\n📌 담당부서: {item['부서']}\n📌 상태: {status_label}\n\n스케줄러 앱에서 확인하세요."
+                                        
+                                        success, msg = notify_all_contacts(sub, body)
+                                        if success: st.success(f"저장 성공! ({msg})")
+                                        else: st.warning(f"저장 성공 (메일 발송 실패: {msg})")
+                                        st.rerun()
+
+                            # 공정 내용 카드 본문
+                            st.markdown(f"""
+                            <div style='background-color:{card_bg}; border:1px solid {card_border}; color:{card_text}; padding:4px; border-radius:4px; margin-bottom:6px;'>
+                                <div style='font-size:10px; {text_style}; line-height:1.2;'>
                                     <b>[{item['부서']}]</b> {item['주요업무']}
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
 
-                            # 점 세개(⋮) 메뉴 - 팝오버로 상태 조율
-                            with st.popover("⋮ 설정", use_container_width=True):
-                                st.write(f"**[{item['매장명']}] 공정 관리**")
-                                is_done_pop = st.checkbox("공정 완료 처리 (✅)", value=item["completed"], key=f"pop_check_{t_id}")
-                                
-                                if st.button("상태 저장 및 메일 발송", key=f"pop_save_{t_id}"):
-                                    if t_id not in st.session_state.task_status:
-                                        st.session_state.task_status[t_id] = {}
-                                    st.session_state.task_status[t_id]["completed"] = is_done_pop
-                                    save_task_status_to_gsheets()
-                                    
-                                    # 메일 발송
-                                    status_label = "완료 (✅)" if is_done_pop else "진행 예정 (⏳)"
-                                    sub = f"📢 [공정 상태 알림] [{item['매장명']}] {item['부서']} - {item['주요업무']}"
-                                    body = f"안녕하세요,\n\n[{item['매장명']}] 지점의 공정 상태가 변경되었습니다.\n\n"
-                                    body += f"📌 공정명: {item['주요업무']}\n📌 담당부서: {item['부서']}\n📌 상태: {status_label}\n\n스케줄러 앱에서 확인하세요."
-                                    
-                                    success, msg = notify_all_contacts(sub, body)
-                                    if success:
-                                        st.success("저장 및 메일 발송 완료!")
-                                    else:
-                                        st.warning(f"저장 완료 (메일 오류: {msg})")
-                                    st.rerun()
-
-    # 2. 모바일 달력 보기
+    # 2. 모바일 달력 보기 (동일하게 우측 상단 ⋮ 설정 적용)
     else:
         cal = calendar.Calendar(firstweekday=0)
         month_days = cal.monthdatescalendar(v_year, v_month)
@@ -502,30 +500,48 @@ with tab1:
         for d_name in ["월", "화", "수", "목", "금", "토", "일"]:
             cal_html += f"<div>{d_name}</div>"
         cal_html += "</div>"
+        st.markdown(cal_html, unsafe_allow_html=True)
         
-        cal_html += "<div class='mobile-cal-grid'>"
         for week in month_days:
-            for d in week:
+            cols = st.columns(7)
+            for i, d in enumerate(week):
                 d_str = d.strftime("%Y-%m-%d")
                 is_cur_month = (d.month == v_month)
-                cell_class = "mobile-day-cell" if is_cur_month else "mobile-day-cell other-month"
                 
-                tasks_html = ""
-                if d_str in schedule_map:
-                    for item in schedule_map[d_str]:
-                        s_color = get_store_color(item["매장명"])
-                        status_mark = "✅" if item["completed"] else ""
-                        bg_color = "#e0e0e0" if item["completed"] else s_color["bg"]
-                        
-                        tasks_html += f"""
-                        <div style='margin-top:2px; padding:2px; border-radius:3px; background-color:{bg_color}; border:1px solid {s_color["border"]}; color:{s_color["text"]}; font-size:9px;'>
-                            {status_mark}<b>[{item["매장명"][:2]}]</b> [{item["부서"][:2]}] {item["주요업무"][:4]}
-                        </div>"""
-                
-                cal_html += f"<div class='{cell_class}'><b>{d.day}</b>{tasks_html}</div>"
-        cal_html += "</div>"
-        
-        st.markdown(cal_html, unsafe_allow_html=True)
+                with cols[i]:
+                    bg_col = "#ffffff" if is_cur_month else "#f9f9f9"
+                    text_col = "#000000" if is_cur_month else "#bbbbbb"
+                    st.markdown(f"<div style='background-color:{bg_col}; color:{text_col}; font-weight:bold; font-size:10px; padding:1px;'>{d.day}</div>", unsafe_allow_html=True)
+                    
+                    if d_str in schedule_map:
+                        for item in schedule_map[d_str]:
+                            t_id = item["task_id"]
+                            s_color = get_store_color(item["매장명"])
+                            
+                            status_mark = "✅" if item["completed"] else ""
+                            bg_color = "#e0e0e0" if item["completed"] else s_color["bg"]
+                            
+                            m_left, m_right = st.columns([3, 1])
+                            with m_left:
+                                st.markdown(f"""
+                                <div style='background-color:{bg_color}; border:1px solid {s_color["border"]}; color:{s_color["text"]}; padding:2px; border-radius:3px; font-size:8px;'>
+                                    {status_mark}<b>[{item["매장명"][:2]}]</b> {item["주요업무"][:4]}
+                                </div>
+                                """, unsafe_allow_html=True)
+                            with m_right:
+                                with st.popover("⋮"):
+                                    st.write(f"**[{item['매장명']}] 모바일 상태 변경**")
+                                    is_done_m = st.checkbox("공정 완료 처리", value=item["completed"], key=f"mob_check_{t_id}")
+                                    if st.button("저장 및 발송", key=f"mob_save_{t_id}"):
+                                        if t_id not in st.session_state.task_status:
+                                            st.session_state.task_status[t_id] = {}
+                                        st.session_state.task_status[t_id]["completed"] = is_done_m
+                                        save_task_status_to_gsheets()
+                                        
+                                        sub = f"📢 [공정 상태 변경] [{item['매장명']}] {item['부서']} - {item['주요업무']}"
+                                        body = f"안녕하세요,\n\n[{item['매장명']}] 공정 상태 변경 알림입니다.\n상태: {'완료 (✅)' if is_done_m else '진행 예정 (⏳)'}"
+                                        notify_all_contacts(sub, body)
+                                        st.rerun()
 
 # --- TAB 2: 지점별 공정표 수정 ---
 with tab2:
@@ -595,7 +611,7 @@ with tab2:
                             if success:
                                 st.success(f"저장 성공! 전체 담당자 발송 완료 ({msg})")
                             else:
-                                st.warning(f"저장 성공 (메일 발송 실패: {msg})")
+                                st.error(f"저장 성공 (메일 발송 실패: {msg})")
                             
                             st.rerun()
 
