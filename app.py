@@ -56,7 +56,7 @@ DEFAULT_CONTACTS = {
     "전부서": {"name": "오픈지원TF", "email": "tf@9block.co.kr"}
 }
 
-# 2. 세션 상태 초기화
+# 2. 세션 상태 초기화 (화면 보기 모드 기억)
 if "stores" not in st.session_state:
     st.session_state.stores = {"충청점": datetime.date(2026, 9, 18)}
 
@@ -71,6 +71,9 @@ if "contacts" not in st.session_state:
 
 if "mail_schedules" not in st.session_state:
     st.session_state.mail_schedules = {}
+
+if "view_mode_choice" not in st.session_state:
+    st.session_state.view_mode_choice = "🗓️ PC용 넓은 달력 보기"
 
 # 이메일 발송 함수
 def send_email_notification(sender_email, sender_password, receiver_email, subject, body):
@@ -171,7 +174,7 @@ for s_name, s_open_date in st.session_state.stores.items():
 # 4. 메인 화면 탭
 tab1, tab2, tab3, tab4 = st.tabs(["🗓️ 월별 달력", "📋 전체 공정표", "📮 자동 예약 발송 관리", "👤 이메일 주소록"])
 
-# --- TAB 1: 월별 달력 (선택형 뷰) ---
+# --- TAB 1: 월별 달력 (상태 보존형) ---
 with tab1:
     c_prev, c_title, c_next = st.columns([1, 4, 1])
     if c_prev.button("◀ 이전달", use_container_width=True):
@@ -188,10 +191,14 @@ with tab1:
     v_year, v_month = st.session_state.current_view_date.year, st.session_state.current_view_date.month
     c_title.markdown(f"<h3 style='text-align: center; color: #1F4E78;'>🗓️ {v_year}년 {v_month:02d}월 가맹점 스케줄</h3>", unsafe_allow_html=True)
 
-    # 화면 보기 방식 전환 라디오 버튼
-    view_mode = st.radio("🖥️ 화면 보기 방식 선택", ["🗓️ PC용 넓은 달력 보기", "📱 모바일용 카드 보기"], horizontal=True)
+    # 선택 모드를 session_state와 동기화
+    options = ["🗓️ PC용 넓은 달력 보기", "📱 모바일용 카드 보기"]
+    current_index = options.index(st.session_state.view_mode_choice)
+    
+    selected_mode = st.radio("🖥️ 화면 보기 방식 선택", options, index=current_index, horizontal=True)
+    st.session_state.view_mode_choice = selected_mode
 
-    if view_mode == "🗓️ PC용 넓은 달력 보기":
+    if st.session_state.view_mode_choice == "🗓️ PC용 넓은 달력 보기":
         cal = calendar.Calendar(firstweekday=0)
         month_days = cal.monthdatescalendar(v_year, v_month)
         cols_header = st.columns(7)
