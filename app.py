@@ -8,13 +8,9 @@ from email.mime.multipart import MIMEMultipart
 # 1. 페이지 기본 설정
 st.set_page_config(page_title="9BLOCK 통합 가맹점 오픈 스케줄러", page_icon="🗓️", layout="wide")
 
-# PC와 모바일을 구분하는 미디어 쿼리 CSS 적용
+# CSS 스타일 정의
 st.markdown("""
     <style>
-    /* 기본(PC) 레이아웃 스타일 */
-    .pc-only { display: block; }
-    .mobile-only { display: none; }
-    
     .mobile-card {
         background-color: #ffffff;
         border-radius: 8px;
@@ -30,18 +26,10 @@ st.markdown("""
         font-size: 11px;
         font-weight: bold;
     }
-
-    /* 화면 너비가 768px 이하(스마트폰/모바일)일 때 적용되는 CSS */
-    @media only screen and (max-width: 768px) {
-        .pc-only { display: none !important; }
-        .mobile-only { display: block !important; }
-        .stApp { padding: 5px; }
-    }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🗓️ 9BLOCK 가맹점 오픈 스케줄러")
-st.caption("PC 접속 시 통합 달력이, 모바일 접속 시 전용 카드 레이아웃이 자동 적용됩니다.")
 
 # 초기 표준 템플릿
 DEFAULT_TASKS = [
@@ -183,7 +171,7 @@ for s_name, s_open_date in st.session_state.stores.items():
 # 4. 메인 화면 탭
 tab1, tab2, tab3, tab4 = st.tabs(["🗓️ 월별 달력", "📋 전체 공정표", "📮 자동 예약 발송 관리", "👤 이메일 주소록"])
 
-# --- TAB 1: 월별 달력 (PC/모바일 하이브리드) ---
+# --- TAB 1: 월별 달력 (선택형 뷰) ---
 with tab1:
     c_prev, c_title, c_next = st.columns([1, 4, 1])
     if c_prev.button("◀ 이전달", use_container_width=True):
@@ -200,63 +188,63 @@ with tab1:
     v_year, v_month = st.session_state.current_view_date.year, st.session_state.current_view_date.month
     c_title.markdown(f"<h3 style='text-align: center; color: #1F4E78;'>🗓️ {v_year}년 {v_month:02d}월 가맹점 스케줄</h3>", unsafe_allow_html=True)
 
-    # --- 1) PC 전용 레이아웃 (시원시원한 7열 넓은 달력) ---
-    st.markdown('<div class="pc-only">', unsafe_allow_html=True)
-    cal = calendar.Calendar(firstweekday=0)
-    month_days = cal.monthdatescalendar(v_year, v_month)
-    cols_header = st.columns(7)
-    days_name = ["월", "화", "수", "목", "금", "토", "일"]
-    for i, d_name in enumerate(days_name):
-        cols_header[i].markdown(f"**<center>{d_name}</center>**", unsafe_allow_html=True)
-    
-    for week in month_days:
-        cols = st.columns(7)
-        for i, d in enumerate(week):
-            d_str = d.strftime("%Y-%m-%d")
-            is_cur_month = (d.month == v_month)
-            box_style = "border:1px solid #ddd; padding:5px; min-height:110px; border-radius:5px;"
-            box_style += "background-color:#ffffff;" if is_cur_month else "background-color:#f9f9f9; color:#bbb;"
-            
-            tasks_html = ""
-            if d_str in schedule_map:
-                for item in schedule_map[d_str]:
-                    c_info = get_dept_color(item["dept"])
-                    tasks_html += f"""
-                    <div style='margin-top:4px; padding:4px; border-radius:4px; background-color:{c_info["bg"]}; border:1px solid {c_info["border"]};'>
-                        <div style='font-size:11px; font-weight:bold; color:{c_info["text"]}; border-bottom:1px solid {c_info["border"]}; padding-bottom:1px; margin-bottom:2px;'>
-                            [{item["store"]}] {item["dept"]}
-                        </div>
-                        <div style='font-size:11px; color:#333333; line-height:1.2;'>{item["task"]}</div>
-                    </div>"""
-            cols[i].markdown(f"<div style='{box_style}'><b>{d.day}</b>{tasks_html}</div>", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # 화면 보기 방식 전환 라디오 버튼
+    view_mode = st.radio("🖥️ 화면 보기 방식 선택", ["🗓️ PC용 넓은 달력 보기", "📱 모바일용 카드 보기"], horizontal=True)
 
-    # --- 2) 모바일 전용 레이아웃 (카드형 터치 뷰) ---
-    st.markdown('<div class="mobile-only">', unsafe_allow_html=True)
-    month_tasks = [s for s in all_schedule_data if s["year"] == v_year and s["month"] == v_month]
-    if month_tasks:
-        sorted_m_tasks = sorted(month_tasks, key=lambda x: x["일자"])
-        for task_item in sorted_m_tasks:
-            c_info = get_dept_color(task_item["부서"])
-            st.markdown(f"""
-            <div class="mobile-card" style="border-left-color: {c_info['border']};">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                    <span style="font-size: 15px; font-weight: bold; color: #1F4E78;">📅 {task_item['일자']}</span>
-                    <span class="badge" style="background-color: {c_info['bg']}; color: {c_info['text']}; border: 1px solid {c_info['border']};">
-                        [{task_item['매장명']}] {task_item['부서']} ({task_item['D-Day']})
-                    </span>
-                </div>
-                <div style="font-size: 13px; color: #333; font-weight: 500;">
-                    {task_item['주요업무']}
-                </div>
-                <div style="font-size: 11px; color: #777; margin-top: 4px;">
-                    담당: {task_item['담당자']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    if view_mode == "🗓️ PC용 넓은 달력 보기":
+        cal = calendar.Calendar(firstweekday=0)
+        month_days = cal.monthdatescalendar(v_year, v_month)
+        cols_header = st.columns(7)
+        days_name = ["월", "화", "수", "목", "금", "토", "일"]
+        for i, d_name in enumerate(days_name):
+            cols_header[i].markdown(f"**<center>{d_name}</center>**", unsafe_allow_html=True)
+        
+        for week in month_days:
+            cols = st.columns(7)
+            for i, d in enumerate(week):
+                d_str = d.strftime("%Y-%m-%d")
+                is_cur_month = (d.month == v_month)
+                box_style = "border:1px solid #ddd; padding:5px; min-height:110px; border-radius:5px;"
+                box_style += "background-color:#ffffff;" if is_cur_month else "background-color:#f9f9f9; color:#bbb;"
+                
+                tasks_html = ""
+                if d_str in schedule_map:
+                    for item in schedule_map[d_str]:
+                        c_info = get_dept_color(item["dept"])
+                        tasks_html += f"""
+                        <div style='margin-top:4px; padding:4px; border-radius:4px; background-color:{c_info["bg"]}; border:1px solid {c_info["border"]};'>
+                            <div style='font-size:11px; font-weight:bold; color:{c_info["text"]}; border-bottom:1px solid {c_info["border"]}; padding-bottom:1px; margin-bottom:2px;'>
+                                [{item["store"]}] {item["dept"]}
+                            </div>
+                            <div style='font-size:11px; color:#333333; line-height:1.2;'>{item["task"]}</div>
+                        </div>"""
+                cols[i].markdown(f"<div style='{box_style}'><b>{d.day}</b>{tasks_html}</div>", unsafe_allow_html=True)
+
     else:
-        st.info("해당 월에 예정된 공정이 없습니다.")
-    st.markdown('</div>', unsafe_allow_html=True)
+        # 모바일 전용 레이아웃
+        month_tasks = [s for s in all_schedule_data if s["year"] == v_year and s["month"] == v_month]
+        if month_tasks:
+            sorted_m_tasks = sorted(month_tasks, key=lambda x: x["일자"])
+            for task_item in sorted_m_tasks:
+                c_info = get_dept_color(task_item["부서"])
+                st.markdown(f"""
+                <div class="mobile-card" style="border-left-color: {c_info['border']};">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <span style="font-size: 15px; font-weight: bold; color: #1F4E78;">📅 {task_item['일자']}</span>
+                        <span class="badge" style="background-color: {c_info['bg']}; color: {c_info['text']}; border: 1px solid {c_info['border']};">
+                            [{task_item['매장명']}] {task_item['부서']} ({task_item['D-Day']})
+                        </span>
+                    </div>
+                    <div style="font-size: 13px; color: #333; font-weight: 500;">
+                        {task_item['주요업무']}
+                    </div>
+                    <div style="font-size: 11px; color: #777; margin-top: 4px;">
+                        담당: {task_item['담당자']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("해당 월에 예정된 공정이 없습니다.")
 
 # --- TAB 2: 전체 공정표 ---
 with tab2:
@@ -264,8 +252,6 @@ with tab2:
     if all_schedule_data:
         sorted_schedule = sorted(all_schedule_data, key=lambda x: x["일자"])
         
-        # PC용 넓은 테이블
-        st.markdown('<div class="pc-only">', unsafe_allow_html=True)
         html_table = "<table style='width:100%; border-collapse:collapse; border:1px solid #ddd; font-size:14px;'>"
         html_table += "<tr style='background-color:#1F4E78; color:white; font-weight:bold; text-align:center; height:35px;'>"
         html_table += "<th>일자</th><th>D-Day</th><th>매장명</th><th>부서</th><th>주요업무</th><th>담당자</th></tr>"
@@ -278,20 +264,6 @@ with tab2:
             html_table += f"<td style='text-align:left;'>{row['주요업무']}</td><td>{row['담당자']}</td></tr>"
         html_table += "</table>"
         st.markdown(html_table, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # 모바일용 간편 리스트
-        st.markdown('<div class="mobile-only">', unsafe_allow_html=True)
-        for row in sorted_schedule:
-            c_info = get_dept_color(row['부서'])
-            st.markdown(f"""
-            <div style="padding: 10px; border-bottom: 1px solid #eee; font-size: 13px; background:#fff; margin-bottom:5px; border-radius:5px;">
-                <b>{row['일자']}</b> <span class="badge" style="background:{c_info['bg']}; color:{c_info['text']};">[{row['매장명']}] {row['부서']}</span> <b>{row['D-Day']}</b><br>
-                <div style="margin-top:3px; color:#333;">{row['주요업무']}</div>
-                <div style="font-size:11px; color:#888;">담당: {row['담당자']}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
 
 # --- TAB 3: 자동 예약 발송 관리 ---
 with tab3:
