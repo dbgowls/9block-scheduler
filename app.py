@@ -2,6 +2,8 @@ import streamlit as st
 import datetime
 import calendar
 import smtplib
+import json
+import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -31,7 +33,12 @@ st.markdown("""
 
 st.title("🗓️ 9BLOCK 가맹점 오픈 스케줄러")
 
-# 초기 표준 템플릿
+# 데이터 파일 경로
+DATA_FILE = "data.json"
+
+# 초기 표준 데이터 정의
+DEFAULT_STORES = {"충청점": "2026-09-18"}
+
 DEFAULT_TASKS = [
     {"부서": "개발", "주요업무": "백화점/몰 입점 물건조사 및 상권분석", "offset": -45, "담당": "개발팀"},
     {"부서": "구매/운영", "주요업무": "[★선행] 입지 맞춤 메뉴 라인업 확정", "offset": -40, "담당": "구매/운영팀"},
@@ -46,7 +53,6 @@ DEFAULT_TASKS = [
     {"부서": "전부서", "주요업무": "🎉 GRAND OPEN & 현장 지원", "offset": 0, "담당": "전부서"}
 ]
 
-# 초기 그룹사 담당자 주소록
 DEFAULT_CONTACTS = {
     "개발팀": {"name": "김개발 팀장", "email": "dev@9block.co.kr"},
     "구매/운영팀": {"name": "이구매 팀장", "email": "buy@9block.co.kr"},
@@ -56,24 +62,65 @@ DEFAULT_CONTACTS = {
     "전부서": {"name": "오픈지원TF", "email": "tf@9block.co.kr"}
 }
 
-# 2. 세션 상태 초기화 (화면 보기 모드 기억)
-if "stores" not in st.session_state:
-    st.session_state.stores = {"충청점": datetime.date(2026, 9, 18)}
+# --- 데이터 불러오기 및 저장 함수 ---
+def load_app_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                
+                # 날짜 문자열(YYYY-MM-DD)을 datetime.date 객체로 변환
+                stores_converted = {
+                    k: datetime.datetime.strptime(v, "%Y-%m-%d").date() 
+                    for k, v in data.get("stores", DEFAULT_STORES).items()
+                }
+                
+                mail_schedules_converted = {
+                    k: datetime.datetime.strptime(v, "%Y-%m-%d").date() 
+                    for k, v in data.get("mail_schedules", {}).items()
+                }
 
-if "current_view_date" not in st.session_state:
+                return {
+                    "stores": stores_converted,
+                    "master_tasks": data.get("master_tasks", DEFAULT_TASKS),
+                    "contacts": data.get("contacts", DEFAULT_CONTACTS),
+                    "mail_schedules": mail_schedules_converted
+                }
+        except Exception:
+            pass
+
+    # 파일이 없거나 오류 발생 시 기본값 반환
+    return {
+        "stores": {k: datetime.datetime.strptime(v, "%Y-%m-%d").date() for k, v in DEFAULT_STORES.items()},
+        "master_tasks": DEFAULT_TASKS,
+        "contacts": DEFAULT_CONTACTS,
+        "mail_schedules": {}
+    }
+
+def save_app_data():
+    # date 객체를 문자열로 변환하여 JSON 저장
+    stores_str = {k: v.strftime("%Y-%m-%d") for k, v in st.session_state.stores.items()}
+    mail_schedules_str = {k: v.strftime("%Y-%m-%d") for k, v in st.session_state.mail_schedules.items()}
+
+    data_to_save = {
+        "stores": stores_str,
+        "master_tasks": st.session_state.master_tasks,
+        "contacts": st.session_state.contacts,
+        "mail_schedules": mail_schedules_str
+    }
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+
+# --- 세션 상태 초기화 (데이터 로드) ---
+if "initialized" not in st.session_state:
+    saved_data = load_app_data()
+    st.session_state.stores = saved_data["stores"]
+    st.session_state.master_tasks = saved_data["master_tasks"]
+    st.session_state.contacts = saved_data["contacts"]
+    st.session_state.mail_schedules = saved_data["mail_schedules"]
     st.session_state.current_view_date = datetime.date(2026, 8, 1)
-
-if "master_tasks" not in st.session_state:
-    st.session_state.master_tasks = [dict(t) for t in DEFAULT_TASKS]
-
-if "contacts" not in st.session_state:
-    st.session_state.contacts = dict(DEFAULT_CONTACTS)
-
-if "mail_schedules" not in st.session_state:
-    st.session_state.mail_schedules = {}
-
-if "view_mode_choice" not in st.session_state:
     st.session_state.view_mode_choice = "🗓️ PC용 넓은 달력 보기"
+    st.session_state.initialized = True
 
 # 이메일 발송 함수
 def send_email_notification(sender_email, sender_password, receiver_email, subject, body):
@@ -111,7 +158,8 @@ with st.sidebar.form("add_store_form", clear_on_submit=True):
     if st.form_submit_button("지점 추가하기"):
         if new_store_name.strip():
             st.session_state.stores[new_store_name.strip()] = new_open_date
-            st.sidebar.success(f"'{new_store_name}' 추가 완료!")
+            save_app_data()  # 💾 변경사항 저장
+            st.sidebar.success(f"'{new_store_name}' 추가 및 저장 완료!")
             st.rerun()
 
 st.sidebar.markdown("---")
@@ -123,11 +171,13 @@ if st.session_state.stores:
     col_btn1, col_btn2 = st.sidebar.columns(2)
     if col_btn1.button("날짜 수정"):
         st.session_state.stores[selected_edit_store] = updated_date
-        st.sidebar.success("수정 완료!")
+        save_app_data()  # 💾 변경사항 저장
+        st.sidebar.success("수정 및 저장 완료!")
         st.rerun()
     if col_btn2.button("지점 삭제"):
         del st.session_state.stores[selected_edit_store]
-        st.sidebar.warning("삭제 완료!")
+        save_app_data()  # 💾 변경사항 저장
+        st.sidebar.warning("삭제 및 저장 완료!")
         st.rerun()
 
 st.sidebar.markdown("---")
@@ -143,6 +193,7 @@ with st.sidebar.expander("➕ 새 공정 항목 추가"):
                 st.session_state.master_tasks.append({
                     "부서": add_dept, "주요업무": add_title.strip(), "offset": add_offset, "담당": add_team.strip()
                 })
+                save_app_data()  # 💾 변경사항 저장
                 st.rerun()
 
 # 3. 데이터 연산
@@ -174,7 +225,7 @@ for s_name, s_open_date in st.session_state.stores.items():
 # 4. 메인 화면 탭
 tab1, tab2, tab3, tab4 = st.tabs(["🗓️ 월별 달력", "📋 전체 공정표", "📮 자동 예약 발송 관리", "👤 이메일 주소록"])
 
-# --- TAB 1: 월별 달력 (상태 보존형) ---
+# --- TAB 1: 월별 달력 ---
 with tab1:
     c_prev, c_title, c_next = st.columns([1, 4, 1])
     if c_prev.button("◀ 이전달", use_container_width=True):
@@ -191,7 +242,6 @@ with tab1:
     v_year, v_month = st.session_state.current_view_date.year, st.session_state.current_view_date.month
     c_title.markdown(f"<h3 style='text-align: center; color: #1F4E78;'>🗓️ {v_year}년 {v_month:02d}월 가맹점 스케줄</h3>", unsafe_allow_html=True)
 
-    # 선택 모드를 session_state와 동기화
     options = ["🗓️ PC용 넓은 달력 보기", "📱 모바일용 카드 보기"]
     current_index = options.index(st.session_state.view_mode_choice)
     
@@ -228,7 +278,7 @@ with tab1:
                 cols[i].markdown(f"<div style='{box_style}'><b>{d.day}</b>{tasks_html}</div>", unsafe_allow_html=True)
 
     else:
-        # 모바일 전용 레이아웃
+        # 모바일 레이아웃
         month_tasks = [s for s in all_schedule_data if s["year"] == v_year and s["month"] == v_month]
         if month_tasks:
             sorted_m_tasks = sorted(month_tasks, key=lambda x: x["일자"])
@@ -290,7 +340,11 @@ with tab3:
             with st.expander(f"📌 [{item['매장명']}] [{item['부서']}] {item['주요업무']} ({item['일자']})"):
                 st.write(f"**담당 팀**: {item['담당자']} ({dept_contact['name']}) | `{dept_contact['email']}`")
                 new_send_date = st.date_input("📧 메일 예약 발송 일자", value=current_send_date, key=f"send_date_{t_id}")
-                st.session_state.mail_schedules[t_id] = new_send_date
+                
+                # 날짜 수정 시 자동 저장
+                if new_send_date != current_send_date:
+                    st.session_state.mail_schedules[t_id] = new_send_date
+                    save_app_data()
                 
                 if st.button("🚀 지금 즉시 테스트 발송", key=f"test_send_{t_id}"):
                     if not user_gmail or not user_app_pass:
@@ -318,7 +372,8 @@ with tab4:
                 "name": name_input.strip(),
                 "email": email_input.strip()
             }
-            st.success("등록되었습니다.")
+            save_app_data()  # 💾 변경사항 저장
+            st.success("등록 및 저장 완료!")
             st.rerun()
 
     st.markdown("---")
