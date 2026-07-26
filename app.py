@@ -32,7 +32,7 @@ st.markdown("""
 
 st.title("🗓️ 9BLOCK 가맹점 오픈 스케줄러")
 
-# 기본 표준 데이터
+# 기본 템플릿 정의
 DEFAULT_STORES = {"충청점": datetime.date(2026, 9, 18)}
 
 DEFAULT_TASKS = [
@@ -58,7 +58,7 @@ DEFAULT_CONTACTS = {
     "전부서": {"name": "오픈지원TF", "email": "tf@9block.co.kr"}
 }
 
-# --- 구글 시트 연결 및 연동 ---
+# --- 구글 시트 연동 ---
 def get_gsheet_doc():
     if "gcp_service_account" not in st.secrets or "SPREADSHEET_ID" not in st.secrets:
         return None
@@ -70,105 +70,108 @@ def get_gsheet_doc():
         sheet_id = st.secrets["SPREADSHEET_ID"]
         return client.open_by_key(sheet_id)
     except Exception as e:
-        st.error(f"구글 시트 인증 실패: {e}")
+        st.error(f"구글 시트 연동 실패: {e}")
         return None
 
 def load_data_from_gsheets():
     try:
         doc = get_gsheet_doc()
-        if not doc:
-            return dict(DEFAULT_STORES), dict(DEFAULT_CONTACTS)
+        if not doc: return dict(DEFAULT_STORES), dict(DEFAULT_CONTACTS), {}
 
-        # 1. 지점 불러오기
+        # 1. 지점
         stores = {}
         try:
             ws_stores = doc.worksheet("stores")
             records = ws_stores.get_all_records()
             for r in records:
-                s_name = str(r.get("매장명", "")).strip()
-                s_date = str(r.get("오픈일", "")).strip()
+                s_name, s_date = str(r.get("매장명", "")).strip(), str(r.get("오픈일", "")).strip()
                 if s_name and s_date:
                     stores[s_name] = datetime.datetime.strptime(s_date, "%Y-%m-%d").date()
-        except Exception:
-            pass
+        except Exception: pass
+        if not stores: stores = dict(DEFAULT_STORES)
 
-        if not stores:
-            stores = dict(DEFAULT_STORES)
-
-        # 2. 주소록 불러오기
+        # 2. 주소록
         contacts = {}
         try:
             ws_contacts = doc.worksheet("contacts")
             c_records = ws_contacts.get_all_records()
             for r in c_records:
-                team = str(r.get("팀명", "")).strip()
-                name = str(r.get("담당자", "")).strip()
-                email = str(r.get("이메일", "")).strip()
-                if team:
-                    contacts[team] = {"name": name, "email": email}
-        except Exception:
-            pass
+                team, name, email = str(r.get("팀명", "")).strip(), str(r.get("담당자", "")).strip(), str(r.get("이메일", "")).strip()
+                if team: contacts[team] = {"name": name, "email": email}
+        except Exception: pass
+        if not contacts: contacts = dict(DEFAULT_CONTACTS)
 
-        if not contacts:
-            contacts = dict(DEFAULT_CONTACTS)
+        # 3. 완료 상태 및 변경된 공정 정보
+        completed_tasks = {}
+        try:
+            ws_status = doc.worksheet("task_status")
+            s_records = ws_status.get_all_records()
+            for r in s_records:
+                t_id = str(r.get("task_id", "")).strip()
+                if t_id:
+                    completed_tasks[t_id] = {
+                        "completed": bool(r.get("completed", False)),
+                        "custom_task": str(r.get("custom_task", "")),
+                        "custom_offset": int(r.get("custom_offset", 0)) if str(r.get("custom_offset", "")).strip() != "" else None
+                    }
+        except Exception: pass
 
-        return stores, contacts
-
-    except Exception as e:
-        st.warning(f"구글 시트 읽기 중 알림: {e}")
-        return dict(DEFAULT_STORES), dict(DEFAULT_CONTACTS)
+        return stores, contacts, completed_tasks
+    except Exception:
+        return dict(DEFAULT_STORES), dict(DEFAULT_CONTACTS), {}
 
 def save_stores_to_gsheets():
     doc = get_gsheet_doc()
-    if not doc:
-        st.error("구글 시트에 연결할 수 없습니다.")
-        return
+    if not doc: return
     try:
-        try:
-            ws = doc.worksheet("stores")
-        except Exception:
-            ws = doc.add_worksheet(title="stores", rows="100", cols="5")
-        
+        try: ws = doc.worksheet("stores")
+        except: ws = doc.add_worksheet(title="stores", rows="100", cols="5")
         ws.clear()
         rows = [["매장명", "오픈일"]]
         for name, date_obj in st.session_state.stores.items():
             rows.append([name, date_obj.strftime("%Y-%m-%d")])
         ws.update("A1", rows)
-        st.toast("☁️ 지점 정보가 구글 시트에 영구 저장되었습니다!", icon="✅")
-    except Exception as e:
-        st.error(f"구글 시트 지점 저장 실패: {e}")
+        st.toast("☁️ 지점 정보가 저장되었습니다!", icon="✅")
+    except Exception as e: st.error(f"저장 실패: {e}")
 
 def save_contacts_to_gsheets():
     doc = get_gsheet_doc()
-    if not doc:
-        st.error("구글 시트에 연결할 수 없습니다.")
-        return
+    if not doc: return
     try:
-        try:
-            ws = doc.worksheet("contacts")
-        except Exception:
-            ws = doc.add_worksheet(title="contacts", rows="100", cols="5")
-        
+        try: ws = doc.worksheet("contacts")
+        except: ws = doc.add_worksheet(title="contacts", rows="100", cols="5")
         ws.clear()
         rows = [["팀명", "담당자", "이메일"]]
         for team, info in st.session_state.contacts.items():
             rows.append([team, info["name"], info["email"]])
         ws.update("A1", rows)
-        st.toast("☁️ 이메일 주소록이 구글 시트에 영구 저장되었습니다!", icon="✅")
-    except Exception as e:
-        st.error(f"구글 시트 주소록 저장 실패: {e}")
+        st.toast("☁️ 주소록이 저장되었습니다!", icon="✅")
+    except Exception as e: st.error(f"저장 실패: {e}")
 
-# --- 세션 초기화 (최초 접속 시 구글 시트 데이터 로드) ---
+def save_task_status_to_gsheets():
+    doc = get_gsheet_doc()
+    if not doc: return
+    try:
+        try: ws = doc.worksheet("task_status")
+        except: ws = doc.add_worksheet(title="task_status", rows="500", cols="5")
+        ws.clear()
+        rows = [["task_id", "completed", "custom_task", "custom_offset"]]
+        for t_id, info in st.session_state.task_status.items():
+            c_val = "TRUE" if info.get("completed") else "FALSE"
+            rows.append([t_id, c_val, info.get("custom_task", ""), info.get("custom_offset", "")])
+        ws.update("A1", rows)
+        st.toast("☁️ 공정 상태 및 수정 내용이 구글 시트에 즉시 반영되었습니다!", icon="✅")
+    except Exception as e: st.error(f"상태 저장 실패: {e}")
+
+# 세션 초기화
 if "stores" not in st.session_state or "contacts" not in st.session_state:
-    loaded_stores, loaded_contacts = load_data_from_gsheets()
+    loaded_stores, loaded_contacts, loaded_status = load_data_from_gsheets()
     st.session_state.stores = loaded_stores
     st.session_state.contacts = loaded_contacts
+    st.session_state.task_status = loaded_status
 
 if "master_tasks" not in st.session_state:
     st.session_state.master_tasks = list(DEFAULT_TASKS)
-
-if "mail_schedules" not in st.session_state:
-    st.session_state.mail_schedules = {}
 
 if "current_view_date" not in st.session_state:
     st.session_state.current_view_date = datetime.date(2026, 8, 1)
@@ -176,9 +179,13 @@ if "current_view_date" not in st.session_state:
 if "view_mode_choice" not in st.session_state:
     st.session_state.view_mode_choice = "🗓️ PC용 넓은 달력 보기"
 
-# 이메일 발송 함수
-def send_email_notification(sender_email, sender_password, receiver_email, subject, body):
+def send_email_auto(receiver_email, subject, body):
     try:
+        if "SENDER_EMAIL" not in st.secrets or "SENDER_PASSWORD" not in st.secrets:
+            return False, "Streamlit Secrets에 SENDER_EMAIL/SENDER_PASSWORD 설정이 없습니다."
+        sender_email = st.secrets["SENDER_EMAIL"]
+        sender_password = st.secrets["SENDER_PASSWORD"]
+
         msg = MIMEMultipart()
         msg['From'] = sender_email
         msg['To'] = receiver_email
@@ -190,7 +197,7 @@ def send_email_notification(sender_email, sender_password, receiver_email, subje
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, receiver_email, msg.as_string())
         server.quit()
-        return True, "메일 발송에 성공했습니다!"
+        return True, "메일 발송 성공"
     except Exception as e:
         return False, f"발송 실패: {e}"
 
@@ -220,8 +227,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("✏️ 지점 정보 수정 / 삭제")
 if st.session_state.stores:
     store_list = list(st.session_state.stores.keys())
-    selected_edit_store = st.sidebar.selectbox("지점 드롭다운 선택", store_list)
-    
+    selected_edit_store = st.sidebar.selectbox("지점 선택", store_list)
     current_date = st.session_state.stores[selected_edit_store]
     updated_date = st.sidebar.date_input("오픈 예정일 변경", value=current_date, key=f"date_input_{selected_edit_store}")
     
@@ -229,7 +235,7 @@ if st.session_state.stores:
     if col_btn1.button("날짜 수정"):
         st.session_state.stores[selected_edit_store] = updated_date
         save_stores_to_gsheets()
-        st.sidebar.success("날짜 수정 및 구글 시트 저장 완료!")
+        st.sidebar.success("수정 완료!")
         st.rerun()
     if col_btn2.button("지점 삭제"):
         del st.session_state.stores[selected_edit_store]
@@ -237,43 +243,41 @@ if st.session_state.stores:
         st.sidebar.warning("삭제 완료!")
         st.rerun()
 
-st.sidebar.markdown("---")
-if st.sidebar.button("🔄 구글 시트 최신 데이터 강제 불러오기"):
-    if "stores" in st.session_state: del st.session_state.stores
-    if "contacts" in st.session_state: del st.session_state.contacts
-    st.rerun()
-
-# 3. 데이터 연산
+# --- 데이터 연산 ---
 all_schedule_data = []
-schedule_map = {}
 
 for s_name, s_open_date in st.session_state.stores.items():
     for task in st.session_state.master_tasks:
-        task_date = s_open_date + datetime.timedelta(days=task["offset"])
-        date_str = task_date.strftime("%Y-%m-%d")
-        offset_val = task['offset']
-        d_day_str = f"D{offset_val}" if offset_val < 0 else ("D-Day" if offset_val == 0 else f"D+{offset_val}")
-        
         task_id = f"{s_name}_{task['부서']}_{task['주요업무']}"
-        default_send_date = task_date - datetime.timedelta(days=1)
-        if task_id not in st.session_state.mail_schedules:
-            st.session_state.mail_schedules[task_id] = default_send_date
+        status_info = st.session_state.task_status.get(task_id, {})
+        
+        # 커스텀 변경 내용 반영
+        task_title = status_info.get("custom_task") if status_info.get("custom_task") else task["주요업무"]
+        offset_val = status_info.get("custom_offset") if status_info.get("custom_offset") is not None else task["offset"]
+        is_completed = status_info.get("completed", False)
+
+        task_date = s_open_date + datetime.timedelta(days=offset_val)
+        date_str = task_date.strftime("%Y-%m-%d")
+        d_day_str = f"D{offset_val}" if offset_val < 0 else ("D-Day" if offset_val == 0 else f"D+{offset_val}")
 
         all_schedule_data.append({
             "task_id": task_id,
             "일자": date_str, "D-Day": d_day_str, "매장명": s_name,
-            "부서": task["부서"], "주요업무": task["주요업무"], "담당자": task["담당"],
-            "raw_date": task_date, "year": task_date.year, "month": task_date.month
+            "부서": task["부서"], "주요업무": task_title, "담당자": task["담당"],
+            "raw_date": task_date, "year": task_date.year, "month": task_date.month,
+            "completed": is_completed, "offset": offset_val
         })
-        if date_str not in schedule_map:
-            schedule_map[date_str] = []
-        schedule_map[date_str].append({"store": s_name, "dept": task["부서"], "task": task["주요업무"]})
 
-# 4. 메인 화면 탭
-tab1, tab2, tab3, tab4 = st.tabs(["🗓️ 월별 달력", "📋 전체 공정표", "📮 자동 예약 발송 관리", "👤 이메일 주소록"])
+# 메인 탭
+tab1, tab2, tab3, tab4 = st.tabs(["🗓️ 월별 달력", "📋 지점별 공정표 수정", "📮 자동 발송 현황", "👤 이메일 주소록"])
 
 # --- TAB 1: 월별 달력 ---
 with tab1:
+    c_filter1, c_filter2 = st.columns(2)
+    selected_store_filter = c_filter1.selectbox("🏬 지점 선택 필터", ["전체 지점"] + list(st.session_state.stores.keys()))
+    status_filter = c_filter2.radio("📌 진행 상태 필터", ["전체 보기", "진행 예정만", "완료된 항목만"], horizontal=True)
+
+    st.markdown("---")
     c_prev, c_title, c_next = st.columns([1, 4, 1])
     if c_prev.button("◀ 이전달", use_container_width=True):
         y, m = st.session_state.current_view_date.year, st.session_state.current_view_date.month - 1
@@ -289,9 +293,25 @@ with tab1:
     v_year, v_month = st.session_state.current_view_date.year, st.session_state.current_view_date.month
     c_title.markdown(f"<h3 style='text-align: center; color: #1F4E78;'>🗓️ {v_year}년 {v_month:02d}월 가맹점 스케줄</h3>", unsafe_allow_html=True)
 
+    # 필터링 적용
+    filtered_schedules = []
+    for item in all_schedule_data:
+        if selected_store_filter != "전체 지점" and item["매장명"] != selected_store_filter:
+            continue
+        if status_filter == "진행 예정만" and item["completed"]:
+            continue
+        if status_filter == "완료된 항목만" and not item["completed"]:
+            continue
+        filtered_schedules.append(item)
+
+    schedule_map = {}
+    for item in filtered_schedules:
+        d_str = item["일자"]
+        if d_str not in schedule_map: schedule_map[d_str] = []
+        schedule_map[d_str].append(item)
+
     options = ["🗓️ PC용 넓은 달력 보기", "📱 모바일용 카드 보기"]
     current_index = options.index(st.session_state.view_mode_choice)
-    
     selected_mode = st.radio("🖥️ 화면 보기 방식 선택", options, index=current_index, horizontal=True)
     st.session_state.view_mode_choice = selected_mode
 
@@ -314,91 +334,111 @@ with tab1:
                 tasks_html = ""
                 if d_str in schedule_map:
                     for item in schedule_map[d_str]:
-                        c_info = get_dept_color(item["dept"])
+                        c_info = get_dept_color(item["부서"])
+                        status_badge = "✅ 완료" if item["completed"] else "⏳ 진행예정"
+                        bg_color = "#e2e2e2" if item["completed"] else c_info["bg"]
+                        text_style = "text-decoration: line-through; color: #888;" if item["completed"] else "color: #333;"
+                        
                         tasks_html += f"""
-                        <div style='margin-top:4px; padding:4px; border-radius:4px; background-color:{c_info["bg"]}; border:1px solid {c_info["border"]};'>
-                            <div style='font-size:11px; font-weight:bold; color:{c_info["text"]}; border-bottom:1px solid {c_info["border"]}; padding-bottom:1px; margin-bottom:2px;'>
-                                [{item["store"]}] {item["dept"]}
+                        <div style='margin-top:4px; padding:4px; border-radius:4px; background-color:{bg_color}; border:1px solid {c_info["border"]};'>
+                            <div style='font-size:10px; font-weight:bold; color:{c_info["text"]}; border-bottom:1px solid {c_info["border"]}; padding-bottom:1px;'>
+                                [{item["매장명"]}] {item["부서"]} ({status_badge})
                             </div>
-                            <div style='font-size:11px; color:#333333; line-height:1.2;'>{item["task"]}</div>
+                            <div style='font-size:11px; {text_style} line-height:1.2; margin-top:2px;'>{item["주요업무"]}</div>
                         </div>"""
                 cols[i].markdown(f"<div style='{box_style}'><b>{d.day}</b>{tasks_html}</div>", unsafe_allow_html=True)
 
     else:
-        month_tasks = [s for s in all_schedule_data if s["year"] == v_year and s["month"] == v_month]
+        month_tasks = [s for s in filtered_schedules if s["year"] == v_year and s["month"] == v_month]
         if month_tasks:
             sorted_m_tasks = sorted(month_tasks, key=lambda x: x["일자"])
             for task_item in sorted_m_tasks:
                 c_info = get_dept_color(task_item["부서"])
+                status_badge = "✅ 완료" if task_item["completed"] else "⏳ 진행예정"
                 st.markdown(f"""
                 <div class="mobile-card" style="border-left-color: {c_info['border']};">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                         <span style="font-size: 15px; font-weight: bold; color: #1F4E78;">📅 {task_item['일자']}</span>
-                        <span class="badge" style="background-color: {c_info['bg']}; color: {c_info['text']}; border: 1px solid {c_info['border']};">
-                            [{task_item['매장명']}] {task_item['부서']} ({task_item['D-Day']})
+                        <span class="badge" style="background-color: {c_info['bg']}; color: {c_info['text']};">
+                            [{task_item['매장명']}] {task_item['부서']} ({status_badge})
                         </span>
                     </div>
                     <div style="font-size: 13px; color: #333; font-weight: 500;">
                         {task_item['주요업무']}
                     </div>
-                    <div style="font-size: 11px; color: #777; margin-top: 4px;">
-                        담당: {task_item['담당자']}
-                    </div>
                 </div>
                 """, unsafe_allow_html=True)
-        else:
-            st.info("해당 월에 예정된 공정이 없습니다.")
 
-# --- TAB 2: 전체 공정표 ---
+# --- TAB 2: 지점별 공정표 수정 및 완료 체크 ---
 with tab2:
-    st.subheader("📋 전체 지점 오픈 일정 목록")
-    if all_schedule_data:
-        sorted_schedule = sorted(all_schedule_data, key=lambda x: x["일자"])
+    st.subheader("📋 지점별 공정표 확인 / 수정 / 완료 체크")
+    
+    if st.session_state.stores:
+        store_tabs = st.tabs(list(st.session_state.stores.keys()))
         
-        html_table = "<table style='width:100%; border-collapse:collapse; border:1px solid #ddd; font-size:14px;'>"
-        html_table += "<tr style='background-color:#1F4E78; color:white; font-weight:bold; text-align:center; height:35px;'>"
-        html_table += "<th>일자</th><th>D-Day</th><th>매장명</th><th>부서</th><th>주요업무</th><th>담당자</th></tr>"
-        for row in sorted_schedule:
-            c_info = get_dept_color(row['부서'])
-            html_table += f"<tr style='border-bottom:1px solid #ddd; height:32px; text-align:center;'>"
-            html_table += f"<td><b>{row['일자']}</b></td><td><span style='background:#f2f2f2; padding:2px 6px; border-radius:3px;'>{row['D-Day']}</span></td>"
-            html_table += f"<td><b>{row['매장명']}</b></td>"
-            html_table += f"<td><span style='background-color:{c_info['bg']}; color:{c_info['text']}; padding:2px 6px; border-radius:3px; font-weight:bold;'>{row['부서']}</span></td>"
-            html_table += f"<td style='text-align:left;'>{row['주요업무']}</td><td>{row['담당자']}</td></tr>"
-        html_table += "</table>"
-        st.markdown(html_table, unsafe_allow_html=True)
+        for index, s_name in enumerate(st.session_state.stores.keys()):
+            with store_tabs[index]:
+                st.markdown(f"#### 🏬 {s_name} 공정 세부 관리 (오픈일: {st.session_state.stores[s_name]})")
+                
+                store_tasks = [t for t in all_schedule_data if t["매장명"] == s_name]
+                
+                for task in store_tasks:
+                    t_id = task["task_id"]
+                    c_info = get_dept_color(task["부서"])
+                    
+                    with st.expander(f"[{task['D-Day']}] {task['일자']} | [{task['부서']}] {task['주요업무']} {'(✅ 완료됨)' if task['completed'] else ''}"):
+                        col1, col2 = st.columns([3, 1])
+                        
+                        # 1. 완료 상태 체크박스
+                        is_done = col1.checkbox("✅ 공정 완료 처리", value=task["completed"], key=f"check_{t_id}")
+                        
+                        # 2. 공정 내용 및 날짜(오프셋) 수정
+                        new_title = col1.text_input("공정 내용 수정", value=task["주요업무"], key=f"title_{t_id}")
+                        new_offset = col1.number_input("D-Day 설정 (오픈일 기준 일수, 예: -45)", value=task["offset"], key=f"offset_{t_id}")
+                        
+                        if col1.button("💾 변경사항 저장 및 담당자 메일 발송", key=f"save_{t_id}"):
+                            # 세션 갱신
+                            if t_id not in st.session_state.task_status:
+                                st.session_state.task_status[t_id] = {}
+                            
+                            st.session_state.task_status[t_id]["completed"] = is_done
+                            st.session_state.task_status[t_id]["custom_task"] = new_title.strip()
+                            st.session_state.task_status[t_id]["custom_offset"] = new_offset
+                            
+                            # 구글 시트에 즉시 영구 저장
+                            save_task_status_to_gsheets()
+                            
+                            # 담당 부서 메일 알림 자동 발송
+                            dept_contact = st.session_state.contacts.get(task["담당자"], {"name": "담당자", "email": ""})
+                            if dept_contact["email"] and "@" in dept_contact["email"]:
+                                subject = f"📢 [일정 변경/완료 알림] [{s_name}] {task['부서']} 공정 변경 안내"
+                                body = f"안녕하세요 {dept_contact['name']} 님,\n\n[{s_name}] 지점의 공정 정보가 업데이트되었습니다.\n\n"
+                                body += f"📌 공정명: {new_title}\n📌 변경일자: D{new_offset} ({st.session_state.stores[s_name] + datetime.timedelta(days=new_offset)})\n📌 완료여부: {'완료' if is_done else '진행 예정'}\n\n스케줄러 앱에서 상세 내용을 확인해 주세요."
+                                
+                                success, msg = send_email_auto(dept_contact["email"], subject, body)
+                                if success:
+                                    st.success(f"저장 완료! {dept_contact['name']}({dept_contact['email']}) 님에게 변경 알림 메일을 발송했습니다.")
+                                else:
+                                    st.warning(f"저장 완료 (메일 발송 오류: {msg})")
+                            else:
+                                st.success("저장 완료! (등록된 담당자 메일 주소가 없어 메일은 발송되지 않았습니다)")
+                            
+                            st.rerun()
 
-# --- TAB 3: 자동 예약 발송 관리 ---
+# --- TAB 3: 자동 발송 현황 ---
 with tab3:
-    st.subheader("📮 공정별 알림 이메일 예약 발송 관리")
-    col_g1, col_g2 = st.columns(2)
-    user_gmail = col_g1.text_input("발신용 Gmail 주소", value="your_email@gmail.com")
-    user_app_pass = col_g2.text_input("Gmail 앱 비밀번호 (16자리)", type="password", value="")
+    st.subheader("🤖 자동 알림 이메일 발송 현황")
+    st.info("💡 매일 아침 8시(한국 시간)에 지정된 공정 담당자에게 알림 메일이 자동 발송됩니다.")
 
-    st.markdown("---")
     if all_schedule_data:
         sorted_schedule = sorted(all_schedule_data, key=lambda x: x["일자"])
         for item in sorted_schedule:
-            t_id = item["task_id"]
-            current_send_date = st.session_state.mail_schedules.get(t_id, item["raw_date"] - datetime.timedelta(days=1))
+            send_target_date = item["raw_date"] - datetime.timedelta(days=1)
             dept_contact = st.session_state.contacts.get(item["담당자"], {"name": "미정", "email": "미등록"})
             
-            with st.expander(f"📌 [{item['매장명']}] [{item['부서']}] {item['주요업무']} ({item['일자']})"):
-                st.write(f"**담당 팀**: {item['담당자']} ({dept_contact['name']}) | `{dept_contact['email']}`")
-                new_send_date = st.date_input("📧 메일 예약 발송 일자", value=current_send_date, key=f"send_date_{t_id}")
-                st.session_state.mail_schedules[t_id] = new_send_date
-                
-                if st.button("🚀 지금 즉시 테스트 발송", key=f"test_send_{t_id}"):
-                    if not user_gmail or not user_app_pass:
-                        st.error("상단에 Gmail 주소와 앱 비밀번호를 입력하세요.")
-                    elif dept_contact['email'] == "미등록":
-                        st.error("담당자 메일 주소가 미등록 상태입니다.")
-                    else:
-                        subject = f"🔔 [알림] [{item['매장명']}] {item['부서']} 공정 안내 ({item['일자']})"
-                        body = f"안녕하세요 {dept_contact['name']} 님,\n\n[{item['매장명']}] 지점의 {item['부서']} 공정({item['주요업무']}) 예정일이 {item['일자']} ({item['D-Day']}) 로 예정되어 있습니다."
-                        success, msg = send_email_notification(user_gmail, user_app_pass, dept_contact['email'], subject, body)
-                        if success: st.success("발송 성공!")
-                        else: st.error(msg)
+            with st.expander(f"📌 [{item['매장명']}] [{item['부서']}] {item['주요업무']} (공정일: {item['일자']})"):
+                st.write(f"**수신 담당자**: {item['담당자']} ({dept_contact['name']}) | `{dept_contact['email']}`")
+                st.write(f"📅 **자동 발송 예정일**: `{send_target_date.strftime('%Y-%m-%d')}` (공정 D-1일전 아침 8시)")
 
 # --- TAB 4: 이메일 주소록 ---
 with tab4:
