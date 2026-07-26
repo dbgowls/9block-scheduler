@@ -32,6 +32,32 @@ st.markdown("""
 
 st.title("🗓️ 9BLOCK 가맹점 오픈 스케줄러")
 
+# 기본 템플릿 정의
+DEFAULT_STORES = {"충청점": datetime.date(2026, 9, 18)}
+
+DEFAULT_TASKS = [
+    {"부서": "개발", "주요업무": "백화점/몰 입점 물건조사 및 상권분석", "offset": -45, "담당": "개발팀"},
+    {"부서": "구매/운영", "주요업무": "[★선행] 입지 맞춤 메뉴 라인업 확정", "offset": -40, "담당": "구매/운영팀"},
+    {"부서": "개발", "주요업무": "가맹점주 미팅 및 전대차 계약 체결", "offset": -35, "담당": "개발팀"},
+    {"부서": "인테리어", "주요업무": "확정 장비 스펙 기반 예가 산출", "offset": -33, "담당": "인테리어팀"},
+    {"부서": "인테리어", "주요업무": "백화점 도면/VMD 제출 및 도면 승인", "offset": -30, "담당": "인테리어팀"},
+    {"부서": "마케팅", "주요업무": "특수상권 프로모션 기획 및 백화점 앱 DM 협의", "offset": -20, "담당": "마케팅팀"},
+    {"부서": "인테리어", "주요업무": "인테리어 현장 착공 (야간공사 및 주방/전기)", "offset": -16, "담당": "인테리어팀"},
+    {"부서": "구매/운영", "주요업무": "점주/매니저 본사 레시피 교육 및 현장 실습", "offset": -10, "담당": "운영팀"},
+    {"부서": "마케팅", "주요업무": "POP/POS 홍보물 제작 및 매장 입고/설치", "offset": -7, "담당": "마케팅팀"},
+    {"부서": "전부서", "주요업무": "🚨 [오픈일사수] 준공검사 및 최종 시운전", "offset": -2, "담당": "전부서"},
+    {"부서": "전부서", "주요업무": "🎉 GRAND OPEN & 현장 지원", "offset": 0, "담당": "전부서"}
+]
+
+DEFAULT_CONTACTS = {
+    "개발팀": {"name": "김개발 팀장", "email": "dev@9block.co.kr"},
+    "구매/운영팀": {"name": "이구매 팀장", "email": "buy@9block.co.kr"},
+    "인테리어팀": {"name": "박설계 팀장", "email": "interior@9block.co.kr"},
+    "마케팅팀": {"name": "최홍보 팀장", "email": "mkt@9block.co.kr"},
+    "운영팀": {"name": "정운영 팀장", "email": "ops@9block.co.kr"},
+    "전부서": {"name": "오픈지원TF", "email": "tf@9block.co.kr"}
+}
+
 # --- 구글 시트 클라이언트 연결 ---
 def get_gspread_client():
     try:
@@ -44,67 +70,53 @@ def get_gspread_client():
         st.error(f"구글 연동 키 설정 오류: {e}")
         return None
 
-# 구글 시트 데이터 불러오기 (캐시 비적용으로 항상 최신 데이터 수신)
+# 구글 시트 데이터 불러오기
 def load_data_from_gsheets():
     client = get_gspread_client()
     if not client:
-        return None
+        return DEFAULT_STORES, DEFAULT_TASKS, DEFAULT_CONTACTS
     
     try:
         sheet_id = st.secrets["SPREADSHEET_ID"]
         doc = client.open_by_key(sheet_id)
         
-        # 1) 지점 데이터
+        # 1) 지점 데이터 불러오기
         try:
             ws_stores = doc.worksheet("stores")
-            stores_data = ws_stores.get_all_records()
-            stores = {r["매장명"]: datetime.datetime.strptime(str(r["오픈일"]), "%Y-%m-%d").date() for r in stores_data if r.get("매장명")}
+            records = ws_stores.get_all_records()
+            stores = {}
+            for r in records:
+                if r.get("매장명") and r.get("오픈일"):
+                    s_date_str = str(r["오픈일"]).strip()
+                    stores[str(r["매장명"]).strip()] = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
+            if not stores:
+                stores = dict(DEFAULT_STORES)
         except Exception:
-            stores = {"충청점": datetime.date(2026, 9, 18)}
+            stores = dict(DEFAULT_STORES)
 
         # 2) 공정 데이터
-        try:
-            ws_tasks = doc.worksheet("tasks")
-            tasks = ws_tasks.get_all_records()
-            if not tasks: raise Exception()
-        except Exception:
-            tasks = [
-                {"부서": "개발", "주요업무": "백화점/몰 입점 물건조사 및 상권분석", "offset": -45, "담당": "개발팀"},
-                {"부서": "구매/운영", "주요업무": "[★선행] 입지 맞춤 메뉴 라인업 확정", "offset": -40, "담당": "구매/운영팀"},
-                {"부서": "개발", "주요업무": "가맹점주 미팅 및 전대차 계약 체결", "offset": -35, "담당": "개발팀"},
-                {"부서": "인테리어", "주요업무": "확정 장비 스펙 기반 예가 산출", "offset": -33, "담당": "인테리어팀"},
-                {"부서": "인테리어", "주요업무": "백화점 도면/VMD 제출 및 도면 승인", "offset": -30, "담당": "인테리어팀"},
-                {"부서": "마케팅", "주요업무": "특수상권 프로모션 기획 및 백화점 앱 DM 협의", "offset": -20, "담당": "마케팅팀"},
-                {"부서": "인테리어", "주요업무": "인테리어 현장 착공 (야간공사 및 주방/전기)", "offset": -16, "담당": "인테리어팀"},
-                {"부서": "구매/운영", "주요업무": "점주/매니저 본사 레시피 교육 및 현장 실습", "offset": -10, "담당": "운영팀"},
-                {"부서": "마케팅", "주요업무": "POP/POS 홍보물 제작 및 매장 입고/설치", "offset": -7, "담당": "마케팅팀"},
-                {"부서": "전부서", "주요업무": "🚨 [오픈일사수] 준공검사 및 최종 시운전", "offset": -2, "담당": "전부서"},
-                {"부서": "전부서", "주요업무": "🎉 GRAND OPEN & 현장 지원", "offset": 0, "담당": "전부서"}
-            ]
+        tasks = list(DEFAULT_TASKS)
 
         # 3) 주소록 데이터
         try:
             ws_contacts = doc.worksheet("contacts")
-            contacts_data = ws_contacts.get_all_records()
-            contacts = {r["팀명"]: {"name": r["담당자"], "email": r["이메일"]} for r in contacts_data if r.get("팀명")}
-            if not contacts: raise Exception()
+            c_records = ws_contacts.get_all_records()
+            contacts = {}
+            for r in c_records:
+                if r.get("팀명"):
+                    contacts[str(r["팀명"]).strip()] = {"name": str(r.get("담당자", "")), "email": str(r.get("이메일", ""))}
+            if not contacts:
+                contacts = dict(DEFAULT_CONTACTS)
         except Exception:
-            contacts = {
-                "개발팀": {"name": "김개발 팀장", "email": "dev@9block.co.kr"},
-                "구매/운영팀": {"name": "이구매 팀장", "email": "buy@9block.co.kr"},
-                "인테리어팀": {"name": "박설계 팀장", "email": "interior@9block.co.kr"},
-                "마케팅팀": {"name": "최홍보 팀장", "email": "mkt@9block.co.kr"},
-                "운영팀": {"name": "정운영 팀장", "email": "ops@9block.co.kr"},
-                "전부서": {"name": "오픈지원TF", "email": "tf@9block.co.kr"}
-            }
+            contacts = dict(DEFAULT_CONTACTS)
 
-        return {"stores": stores, "master_tasks": tasks, "contacts": contacts}
+        return stores, tasks, contacts
 
     except Exception as e:
-        st.error(f"구글 시트 연동 에러: {e}")
-        return None
+        st.error(f"구글 시트 데이터를 불러오지 못했습니다: {e}")
+        return DEFAULT_STORES, DEFAULT_TASKS, DEFAULT_CONTACTS
 
-# 구글 시트에 저장
+# 구글 시트에 지점 데이터 저장
 def save_stores_to_gsheets():
     client = get_gspread_client()
     if client:
@@ -114,7 +126,7 @@ def save_stores_to_gsheets():
             try:
                 ws = doc.worksheet("stores")
             except:
-                ws = doc.add_worksheet("stores", rows="100", cols="5")
+                ws = doc.add_worksheet(title="stores", rows="100", cols="5")
             
             ws.clear()
             rows = [["매장명", "오픈일"]]
@@ -122,8 +134,9 @@ def save_stores_to_gsheets():
                 rows.append([name, date_obj.strftime("%Y-%m-%d")])
             ws.update("A1", rows)
         except Exception as e:
-            st.error(f"구글 시트 저장 실패 (공유 권한을 확인하세요): {e}")
+            st.error(f"구글 시트 저장 실패: {e}")
 
+# 구글 시트에 주소록 데이터 저장
 def save_contacts_to_gsheets():
     client = get_gspread_client()
     if client:
@@ -133,7 +146,7 @@ def save_contacts_to_gsheets():
             try:
                 ws = doc.worksheet("contacts")
             except:
-                ws = doc.add_worksheet("contacts", rows="100", cols="5")
+                ws = doc.add_worksheet(title="contacts", rows="100", cols="5")
             
             ws.clear()
             rows = [["팀명", "담당자", "이메일"]]
@@ -141,42 +154,23 @@ def save_contacts_to_gsheets():
                 rows.append([team, info["name"], info["email"]])
             ws.update("A1", rows)
         except Exception as e:
-            st.error(f"구글 시트 저장 실패: {e}")
+            st.error(f"구글 시트 주소록 저장 실패: {e}")
 
-# --- 세션 초기화 (접속 시 구글 시트에서 매번 최신 데이터 불러오기) ---
-if "initialized" not in st.session_state:
-    gs_data = load_data_from_gsheets()
-    if gs_data and gs_data["stores"]:
-        st.session_state.stores = gs_data["stores"]
-        st.session_state.master_tasks = gs_data["master_tasks"]
-        st.session_state.contacts = gs_data["contacts"]
-    else:
-        st.session_state.stores = {"충청점": datetime.date(2026, 9, 18)}
-        st.session_state.master_tasks = [
-            {"부서": "개발", "주요업무": "백화점/몰 입점 물건조사 및 상권분석", "offset": -45, "담당": "개발팀"},
-            {"부서": "구매/운영", "주요업무": "[★선행] 입지 맞춤 메뉴 라인업 확정", "offset": -40, "담당": "구매/운영팀"},
-            {"부서": "개발", "주요업무": "가맹점주 미팅 및 전대차 계약 체결", "offset": -35, "담당": "개발팀"},
-            {"부서": "인테리어", "주요업무": "확정 장비 스펙 기반 예가 산출", "offset": -33, "담당": "인테리어팀"},
-            {"부서": "인테리어", "주요업무": "백화점 도면/VMD 제출 및 도면 승인", "offset": -30, "담당": "인테리어팀"},
-            {"부서": "마케팅", "주요업무": "특수상권 프로모션 기획 및 백화점 앱 DM 협의", "offset": -20, "담당": "마케팅팀"},
-            {"부서": "인테리어", "주요업무": "인테리어 현장 착공 (야간공사 및 주방/전기)", "offset": -16, "담당": "인테리어팀"},
-            {"부서": "구매/운영", "주요업무": "점주/매니저 본사 레시피 교육 및 현장 실습", "offset": -10, "담당": "운영팀"},
-            {"부서": "마케팅", "주요업무": "POP/POS 홍보물 제작 및 매장 입고/설치", "offset": -7, "담당": "마케팅팀"},
-            {"부서": "전부서", "주요업무": "🚨 [오픈일사수] 준공검사 및 최종 시운전", "offset": -2, "담당": "전부서"},
-            {"부서": "전부서", "주요업무": "🎉 GRAND OPEN & 현장 지원", "offset": 0, "담당": "전부서"}
-        ]
-        st.session_state.contacts = {
-            "개발팀": {"name": "김개발 팀장", "email": "dev@9block.co.kr"},
-            "구매/운영팀": {"name": "이구매 팀장", "email": "buy@9block.co.kr"},
-            "인테리어팀": {"name": "박설계 팀장", "email": "interior@9block.co.kr"},
-            "마케팅팀": {"name": "최홍보 팀장", "email": "mkt@9block.co.kr"},
-            "운영팀": {"name": "정운영 팀장", "email": "ops@9block.co.kr"},
-            "전부서": {"name": "오픈지원TF", "email": "tf@9block.co.kr"}
-        }
+# --- 세션 상태 초기화 (구글 시트 연동 갱신) ---
+if "stores" not in st.session_state:
+    loaded_stores, loaded_tasks, loaded_contacts = load_data_from_gsheets()
+    st.session_state.stores = loaded_stores
+    st.session_state.master_tasks = loaded_tasks
+    st.session_state.contacts = loaded_contacts
+
+if "mail_schedules" not in st.session_state:
     st.session_state.mail_schedules = {}
+
+if "current_view_date" not in st.session_state:
     st.session_state.current_view_date = datetime.date(2026, 8, 1)
+
+if "view_mode_choice" not in st.session_state:
     st.session_state.view_mode_choice = "🗓️ PC용 넓은 달력 보기"
-    st.session_state.initialized = True
 
 # 이메일 발송 함수
 def send_email_notification(sender_email, sender_password, receiver_email, subject, body):
@@ -237,8 +231,8 @@ if st.session_state.stores:
         st.rerun()
 
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 구글 시트 최신 데이터 불러오기"):
-    st.session_state.clear()
+if st.sidebar.button("🔄 구글 시트 강제 동기화 (새로고침)"):
+    del st.session_state.stores
     st.rerun()
 
 # 3. 데이터 연산
