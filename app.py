@@ -7,25 +7,51 @@ from email.mime.multipart import MIMEMultipart
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# 1. 페이지 기본 설정
+# 1. 페이지 기본 설정 및 모바일 달력 최적화 CSS
 st.set_page_config(page_title="9BLOCK 통합 가맹점 오픈 스케줄러", page_icon="🗓️", layout="wide")
 
 st.markdown("""
     <style>
-    .mobile-card {
-        background-color: #ffffff;
-        border-radius: 8px;
-        padding: 12px;
-        margin-bottom: 10px;
-        border-left: 5px solid #1F4E78;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .badge {
-        display: inline-block;
-        padding: 3px 8px;
-        border-radius: 12px;
-        font-size: 11px;
+    /* 모바일 달력 그리드 스타일 최적화 */
+    .mobile-cal-header {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        text-align: center;
         font-weight: bold;
+        background-color: #1F4E78;
+        color: white;
+        padding: 6px 0;
+        border-radius: 6px 6px 0 0;
+        font-size: 12px;
+    }
+    .mobile-cal-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 2px;
+        background-color: #e0e0e0;
+        border: 1px solid #e0e0e0;
+        border-radius: 0 0 6px 6px;
+    }
+    .mobile-day-cell {
+        background-color: #ffffff;
+        min-height: 85px;
+        padding: 3px;
+        font-size: 10px;
+        overflow: hidden;
+    }
+    .mobile-day-cell.other-month {
+        background-color: #f7f7f7;
+        color: #bbb;
+    }
+    .mobile-task-chip {
+        margin-top: 2px;
+        padding: 2px 3px;
+        border-radius: 3px;
+        font-size: 9px;
+        line-height: 1.1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -101,7 +127,7 @@ def load_data_from_gsheets():
         except Exception: pass
         if not contacts: contacts = dict(DEFAULT_CONTACTS)
 
-        # 3. 완료 상태 및 변경된 공정 정보
+        # 3. 완료 상태 및 변경 내용
         completed_tasks = {}
         try:
             ws_status = doc.worksheet("task_status")
@@ -177,7 +203,7 @@ if "current_view_date" not in st.session_state:
     st.session_state.current_view_date = datetime.date(2026, 8, 1)
 
 if "view_mode_choice" not in st.session_state:
-    st.session_state.view_mode_choice = "🗓️ PC용 넓은 달력 보기"
+    st.session_state.view_mode_choice = "📱 모바일 달력 보기"
 
 def send_email_auto(receiver_email, subject, body):
     try:
@@ -251,7 +277,6 @@ for s_name, s_open_date in st.session_state.stores.items():
         task_id = f"{s_name}_{task['부서']}_{task['주요업무']}"
         status_info = st.session_state.task_status.get(task_id, {})
         
-        # 커스텀 변경 내용 반영
         task_title = status_info.get("custom_task") if status_info.get("custom_task") else task["주요업무"]
         offset_val = status_info.get("custom_offset") if status_info.get("custom_offset") is not None else task["offset"]
         is_completed = status_info.get("completed", False)
@@ -310,12 +335,13 @@ with tab1:
         if d_str not in schedule_map: schedule_map[d_str] = []
         schedule_map[d_str].append(item)
 
-    options = ["🗓️ PC용 넓은 달력 보기", "📱 모바일용 카드 보기"]
-    current_index = options.index(st.session_state.view_mode_choice)
+    options = ["📱 모바일 달력 보기", "🖥️ PC 넓은 달력 보기"]
+    current_index = options.index(st.session_state.view_mode_choice) if st.session_state.view_mode_choice in options else 0
     selected_mode = st.radio("🖥️ 화면 보기 방식 선택", options, index=current_index, horizontal=True)
     st.session_state.view_mode_choice = selected_mode
 
-    if st.session_state.view_mode_choice == "🗓️ PC용 넓은 달력 보기":
+    # 1. PC 넓은 달력 보기
+    if st.session_state.view_mode_choice == "🖥️ PC 넓은 달력 보기":
         cal = calendar.Calendar(firstweekday=0)
         month_days = cal.monthdatescalendar(v_year, v_month)
         cols_header = st.columns(7)
@@ -335,39 +361,54 @@ with tab1:
                 if d_str in schedule_map:
                     for item in schedule_map[d_str]:
                         c_info = get_dept_color(item["부서"])
-                        status_badge = "✅ 완료" if item["completed"] else "⏳ 진행예정"
+                        status_badge = "✅" if item["completed"] else "⏳"
                         bg_color = "#e2e2e2" if item["completed"] else c_info["bg"]
                         text_style = "text-decoration: line-through; color: #888;" if item["completed"] else "color: #333;"
                         
                         tasks_html += f"""
                         <div style='margin-top:4px; padding:4px; border-radius:4px; background-color:{bg_color}; border:1px solid {c_info["border"]};'>
                             <div style='font-size:10px; font-weight:bold; color:{c_info["text"]}; border-bottom:1px solid {c_info["border"]}; padding-bottom:1px;'>
-                                [{item["매장명"]}] {item["부서"]} ({status_badge})
+                                [{item["매장명"]}] {item["부서"]} {status_badge}
                             </div>
                             <div style='font-size:11px; {text_style} line-height:1.2; margin-top:2px;'>{item["주요업무"]}</div>
                         </div>"""
                 cols[i].markdown(f"<div style='{box_style}'><b>{d.day}</b>{tasks_html}</div>", unsafe_allow_html=True)
 
+    # 2. 모바일 달력 그리드 보기 (카드 대체 개편)
     else:
-        month_tasks = [s for s in filtered_schedules if s["year"] == v_year and s["month"] == v_month]
-        if month_tasks:
-            sorted_m_tasks = sorted(month_tasks, key=lambda x: x["일자"])
-            for task_item in sorted_m_tasks:
-                c_info = get_dept_color(task_item["부서"])
-                status_badge = "✅ 완료" if task_item["completed"] else "⏳ 진행예정"
-                st.markdown(f"""
-                <div class="mobile-card" style="border-left-color: {c_info['border']};">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                        <span style="font-size: 15px; font-weight: bold; color: #1F4E78;">📅 {task_item['일자']}</span>
-                        <span class="badge" style="background-color: {c_info['bg']}; color: {c_info['text']};">
-                            [{task_item['매장명']}] {task_item['부서']} ({status_badge})
-                        </span>
-                    </div>
-                    <div style="font-size: 13px; color: #333; font-weight: 500;">
-                        {task_item['주요업무']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+        cal = calendar.Calendar(firstweekday=0)
+        month_days = cal.monthdatescalendar(v_year, v_month)
+        
+        # 요일 헤더
+        cal_html = "<div class='mobile-cal-header'>"
+        for d_name in ["월", "화", "수", "목", "금", "토", "일"]:
+            cal_html += f"<div>{d_name}</div>"
+        cal_html += "</div>"
+        
+        # 달력 날짜 그리드
+        cal_html += "<div class='mobile-cal-grid'>"
+        for week in month_days:
+            for d in week:
+                d_str = d.strftime("%Y-%m-%d")
+                is_cur_month = (d.month == v_month)
+                cell_class = "mobile-day-cell" if is_cur_month else "mobile-day-cell other-month"
+                
+                tasks_html = ""
+                if d_str in schedule_map:
+                    for item in schedule_map[d_str]:
+                        c_info = get_dept_color(item["부서"])
+                        status_mark = "✅" if item["completed"] else ""
+                        bg_color = "#e0e0e0" if item["completed"] else c_info["bg"]
+                        
+                        tasks_html += f"""
+                        <div class='mobile-task-chip' style='background-color:{bg_color}; border:1px solid {c_info["border"]}; color:{c_info["text"]};'>
+                            {status_mark}[{item["매장명"][:2]}] {item["주요업무"][:6]}
+                        </div>"""
+                
+                cal_html += f"<div class='{cell_class}'><b>{d.day}</b>{tasks_html}</div>"
+        cal_html += "</div>"
+        
+        st.markdown(cal_html, unsafe_allow_html=True)
 
 # --- TAB 2: 지점별 공정표 수정 및 완료 체크 ---
 with tab2:
@@ -389,15 +430,11 @@ with tab2:
                     with st.expander(f"[{task['D-Day']}] {task['일자']} | [{task['부서']}] {task['주요업무']} {'(✅ 완료됨)' if task['completed'] else ''}"):
                         col1, col2 = st.columns([3, 1])
                         
-                        # 1. 완료 상태 체크박스
                         is_done = col1.checkbox("✅ 공정 완료 처리", value=task["completed"], key=f"check_{t_id}")
-                        
-                        # 2. 공정 내용 및 날짜(오프셋) 수정
                         new_title = col1.text_input("공정 내용 수정", value=task["주요업무"], key=f"title_{t_id}")
                         new_offset = col1.number_input("D-Day 설정 (오픈일 기준 일수, 예: -45)", value=task["offset"], key=f"offset_{t_id}")
                         
                         if col1.button("💾 변경사항 저장 및 담당자 메일 발송", key=f"save_{t_id}"):
-                            # 세션 갱신
                             if t_id not in st.session_state.task_status:
                                 st.session_state.task_status[t_id] = {}
                             
@@ -405,10 +442,8 @@ with tab2:
                             st.session_state.task_status[t_id]["custom_task"] = new_title.strip()
                             st.session_state.task_status[t_id]["custom_offset"] = new_offset
                             
-                            # 구글 시트에 즉시 영구 저장
                             save_task_status_to_gsheets()
                             
-                            # 담당 부서 메일 알림 자동 발송
                             dept_contact = st.session_state.contacts.get(task["담당자"], {"name": "담당자", "email": ""})
                             if dept_contact["email"] and "@" in dept_contact["email"]:
                                 subject = f"📢 [일정 변경/완료 알림] [{s_name}] {task['부서']} 공정 변경 안내"
