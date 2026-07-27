@@ -1,16 +1,16 @@
-name: 매일 자동 알림 이메일 발송
+name: Daily Auto Mailer
 
 on:
   schedule:
-    # 매일 한국 시간 아침 8시 (UTC 23:00) 자동 실행
+    # 매일 아침 8시 KST (UTC 23:00) 실행
     - cron: '0 23 * * *'
-  workflow_dispatch: # 필요 시 수동으로 트리거 가능
+  workflow_dispatch: # 깃허브에서 수동으로 'Run workflow' 버튼을 눌러 테스트할 수 있게 해주는 옵션
 
 jobs:
-  send-mail:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: 코드 체크아웃
+      - name: 저장소 코드 가져오기
         uses: actions/checkout@v3
 
       - name: 파이썬 환경 설정
@@ -18,14 +18,15 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 라이브러리 설치
+      - name: 필요 라이브러리 설치
         run: |
           pip install gspread oauth2client
 
-      - name: 자동 메일 발송 스크립트 실행
+      - name: 자동 발송 스크립트 실행
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
-        run: python send_daily_mail.py
+        run: |
+          python send_daily_mail.py
