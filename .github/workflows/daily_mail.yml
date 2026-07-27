@@ -1,2 +1,2 @@
 run: |
-  python send_daily_mail.py
+  python app.py
